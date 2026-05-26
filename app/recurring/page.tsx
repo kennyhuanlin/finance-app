@@ -1,0 +1,926 @@
+"use client";
+
+import { useMemo, useState } from "react";
+import Link from "next/link";
+import { useCategories } from "../categories-context";
+import { recurringRules } from "../data";
+
+type RecurringRule = {
+  id: string;
+  name: string;
+  type: string;
+  nature: string;
+  necessity: string;
+  categoryId?: string;
+  category: string;
+  amount: number;
+  frequency: string;
+  startDate: string;
+  nextRunDate: string;
+  status: "active" | "paused";
+  enabled: boolean;
+  manualNextRunDate: boolean;
+};
+
+type RuleForm = Omit<RecurringRule, "id" | "amount"> & {
+  id?: string;
+  amount: string;
+};
+
+const typeOptions = ["支出", "收入"];
+const natureOptions = ["固定扣款", "分期付款", "家庭支出", "訂閱服務"];
+const necessityOptions = ["必要", "重要", "可調整", "可取消"];
+const frequencyOptions = ["daily", "weekly", "monthly", "yearly"];
+const calculatorKeys = ["1", "2", "3", "4", "5", "6", "7", "8", "9", ".", "0"];
+
+const emptyForm: RuleForm = {
+  name: "",
+  type: "支出",
+  nature: "固定扣款",
+  necessity: "必要",
+  category: "住房",
+  amount: "",
+  frequency: "monthly",
+  startDate: "2026-05-26",
+  nextRunDate: "2026-06-01",
+  status: "active",
+  enabled: true,
+  manualNextRunDate: false,
+};
+
+function formatMoney(value: number) {
+  return new Intl.NumberFormat("zh-TW", {
+    style: "currency",
+    currency: "TWD",
+    maximumFractionDigits: 0,
+  }).format(value);
+}
+
+function formatFrequency(value: string) {
+  const labels: Record<string, string> = {
+    daily: "每日",
+    weekly: "每週",
+    monthly: "每月",
+    yearly: "每年",
+  };
+
+  return labels[value] ?? value;
+}
+
+function formatAmountDisplay(value: string) {
+  if (!value) {
+    return "0";
+  }
+
+  const [integerPart, decimalPart] = value.split(".");
+  const formattedInteger = new Intl.NumberFormat("zh-TW").format(
+    Number(integerPart || "0"),
+  );
+
+  return decimalPart === undefined
+    ? formattedInteger
+    : `${formattedInteger}.${decimalPart}`;
+}
+
+function todayString() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function addPeriod(date: string, frequency: string) {
+  if (!date) {
+    return "";
+  }
+
+  const [year, month, day] = date.split("-").map(Number);
+  const nextDate = new Date(year, month - 1, day);
+
+  if (frequency === "daily") {
+    nextDate.setDate(nextDate.getDate() + 1);
+  } else if (frequency === "weekly") {
+    nextDate.setDate(nextDate.getDate() + 7);
+  } else if (frequency === "yearly") {
+    nextDate.setFullYear(nextDate.getFullYear() + 1);
+  } else {
+    nextDate.setMonth(nextDate.getMonth() + 1);
+  }
+
+  const nextYear = nextDate.getFullYear();
+  const nextMonth = String(nextDate.getMonth() + 1).padStart(2, "0");
+  const nextDay = String(nextDate.getDate()).padStart(2, "0");
+
+  return `${nextYear}-${nextMonth}-${nextDay}`;
+}
+
+function formatDate(date: string) {
+  return new Intl.DateTimeFormat("zh-TW", {
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+  }).format(new Date(date));
+}
+
+function BackIcon() {
+  return (
+    <svg
+      aria-hidden="true"
+      className="h-5 w-5"
+      fill="none"
+      viewBox="0 0 24 24"
+      stroke="currentColor"
+      strokeWidth="1.9"
+    >
+      <path strokeLinecap="round" strokeLinejoin="round" d="M15 5 8 12l7 7" />
+    </svg>
+  );
+}
+
+function WalletIcon() {
+  return (
+    <svg
+      aria-hidden="true"
+      className="h-5 w-5"
+      fill="none"
+      viewBox="0 0 24 24"
+      stroke="currentColor"
+      strokeWidth="1.8"
+    >
+      <path
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        d="M4 7.5A2.5 2.5 0 0 1 6.5 5h11A2.5 2.5 0 0 1 20 7.5v9A2.5 2.5 0 0 1 17.5 19h-11A2.5 2.5 0 0 1 4 16.5v-9Z"
+      />
+      <path strokeLinecap="round" strokeLinejoin="round" d="M16 12h4" />
+    </svg>
+  );
+}
+
+function CardIcon() {
+  return (
+    <svg
+      aria-hidden="true"
+      className="h-5 w-5"
+      fill="none"
+      viewBox="0 0 24 24"
+      stroke="currentColor"
+      strokeWidth="1.8"
+    >
+      <path
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        d="M4 8h16M6 5h12a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2Z"
+      />
+    </svg>
+  );
+}
+
+function RepeatIcon() {
+  return (
+    <svg
+      aria-hidden="true"
+      className="h-5 w-5"
+      fill="none"
+      viewBox="0 0 24 24"
+      stroke="currentColor"
+      strokeWidth="1.8"
+    >
+      <path
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        d="M17 2.5 20.5 6 17 9.5M3.5 11V9a3 3 0 0 1 3-3h14M7 21.5 3.5 18 7 14.5M20.5 13v2a3 3 0 0 1-3 3h-14"
+      />
+    </svg>
+  );
+}
+
+function ChartIcon() {
+  return (
+    <svg
+      aria-hidden="true"
+      className="h-5 w-5"
+      fill="none"
+      viewBox="0 0 24 24"
+      stroke="currentColor"
+      strokeWidth="1.8"
+    >
+      <path
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        d="M5 19V9m7 10V5m7 14v-7"
+      />
+    </svg>
+  );
+}
+
+function CategoriesIcon() {
+  return (
+    <svg
+      aria-hidden="true"
+      className="h-5 w-5"
+      fill="none"
+      viewBox="0 0 24 24"
+      stroke="currentColor"
+      strokeWidth="1.8"
+    >
+      <path
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        d="M5.5 5.5h5v5h-5v-5ZM13.5 5.5h5v5h-5v-5ZM5.5 13.5h5v5h-5v-5ZM13.5 13.5h5v5h-5v-5Z"
+      />
+    </svg>
+  );
+}
+
+export default function RecurringPage() {
+  const { categories } = useCategories();
+  const expenseCategories = categories.filter((item) => item.type === "expense");
+  const [rules, setRules] = useState<RecurringRule[]>(
+    recurringRules.map((rule, index) => {
+      const startDate = `2026-05-${String(index + 1).padStart(2, "0")}`;
+
+      return {
+        ...rule,
+        id: rule.id,
+        type: "支出",
+        nature: rule.category === "訂閱" ? "訂閱服務" : "固定扣款",
+        necessity: rule.category === "訂閱" ? "可調整" : "必要",
+        startDate,
+        nextRunDate: addPeriod(startDate, rule.frequency),
+        status: rule.enabled ? "active" : "paused",
+        manualNextRunDate: false,
+      };
+    }),
+  );
+  const [editingRule, setEditingRule] = useState<RuleForm | null>(null);
+  const [amountKeyboardOpen, setAmountKeyboardOpen] = useState(false);
+
+  const enabledCount = rules.filter((rule) => rule.status === "active").length;
+  const monthlyTotal = useMemo(
+    () =>
+      rules
+        .filter((rule) => rule.status === "active")
+        .reduce((sum, rule) => sum + rule.amount, 0),
+    [rules],
+  );
+
+  function toggleRule(id: string) {
+    setRules((current) =>
+      current.map((rule) => {
+        if (rule.id !== id) {
+          return rule;
+        }
+
+        if (rule.status === "active") {
+          return { ...rule, enabled: false, status: "paused" };
+        }
+
+        return {
+          ...rule,
+          enabled: true,
+          status: "active",
+          nextRunDate: rule.manualNextRunDate
+            ? rule.nextRunDate
+            : addPeriod(todayString(), rule.frequency),
+        };
+      }),
+    );
+  }
+
+  function openCreateForm() {
+    const startDate = todayString();
+
+    setEditingRule({
+      ...emptyForm,
+      category: expenseCategories[0]?.name ?? "其他",
+      startDate,
+      nextRunDate: addPeriod(startDate, emptyForm.frequency),
+      manualNextRunDate: false,
+    });
+    setAmountKeyboardOpen(true);
+  }
+
+  function openEditForm(rule: RecurringRule) {
+    setEditingRule({
+      ...rule,
+      amount: String(rule.amount),
+      manualNextRunDate: false,
+    });
+    setAmountKeyboardOpen(true);
+  }
+
+  function updateEditingRule<K extends keyof RuleForm>(
+    key: K,
+    value: RuleForm[K],
+  ) {
+    setEditingRule((current) => {
+      if (!current) {
+        return current;
+      }
+
+      const next = { ...current, [key]: value };
+
+      if (
+        (key === "startDate" || key === "frequency") &&
+        !current.manualNextRunDate
+      ) {
+        next.nextRunDate = addPeriod(
+          key === "startDate" ? String(value) : current.startDate,
+          key === "frequency" ? String(value) : current.frequency,
+        );
+      }
+
+      if (key === "nextRunDate") {
+        next.manualNextRunDate = true;
+      }
+
+      return next;
+    });
+  }
+
+  function handleCalculatorTap(key: string) {
+    setEditingRule((current) => {
+      if (!current) {
+        return current;
+      }
+
+      if (key === ".") {
+        return {
+          ...current,
+          amount: current.amount.includes(".")
+            ? current.amount
+            : `${current.amount || "0"}.`,
+        };
+      }
+
+      const [, decimalPart] = current.amount.split(".");
+
+      if (decimalPart && decimalPart.length >= 2) {
+        return current;
+      }
+
+      return {
+        ...current,
+        amount: current.amount === "0" ? key : `${current.amount}${key}`,
+      };
+    });
+  }
+
+  function deleteAmountDigit() {
+    setEditingRule((current) =>
+      current ? { ...current, amount: current.amount.slice(0, -1) } : current,
+    );
+  }
+
+  function clearAmount() {
+    setEditingRule((current) => (current ? { ...current, amount: "" } : current));
+  }
+
+  function toggleEditingEnabled() {
+    setEditingRule((current) => {
+      if (!current) {
+        return current;
+      }
+
+      if (current.enabled) {
+        return { ...current, enabled: false, status: "paused" };
+      }
+
+      return {
+        ...current,
+        enabled: true,
+        status: "active",
+        nextRunDate: current.manualNextRunDate
+          ? current.nextRunDate
+          : addPeriod(todayString(), current.frequency),
+      };
+    });
+  }
+
+  function saveRule(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
+    if (!editingRule || !editingRule.name.trim() || Number(editingRule.amount) <= 0) {
+      return;
+    }
+
+    const nextRule: RecurringRule = {
+      id: editingRule.id ?? `rule-${Date.now()}`,
+      name: editingRule.name.trim(),
+      type: editingRule.type,
+      nature: editingRule.nature,
+      necessity: editingRule.necessity,
+      category: editingRule.category,
+      categoryId:
+        categories.find((category) => category.name === editingRule.category)
+          ?.id ?? editingRule.categoryId,
+      amount: Number(editingRule.amount),
+      frequency: editingRule.frequency,
+      startDate: editingRule.startDate,
+      nextRunDate: editingRule.nextRunDate,
+      status: editingRule.enabled ? "active" : "paused",
+      enabled: editingRule.enabled,
+      manualNextRunDate: editingRule.manualNextRunDate,
+    };
+
+    setRules((current) =>
+      editingRule.id
+        ? current.map((rule) => (rule.id === editingRule.id ? nextRule : rule))
+        : [nextRule, ...current],
+    );
+    setEditingRule(null);
+    setAmountKeyboardOpen(false);
+  }
+
+  function deleteRule(rule: RecurringRule) {
+    const confirmed = window.confirm(`確定要刪除「${rule.name}」嗎？`);
+
+    if (!confirmed) {
+      return;
+    }
+
+    setRules((current) => current.filter((item) => item.id !== rule.id));
+  }
+
+  return (
+    <main className="min-h-screen overflow-x-hidden bg-[#f6f7fb] text-slate-950">
+      <div className="fixed inset-0 -z-10 bg-[radial-gradient(circle_at_0%_0%,#dbeafe_0,transparent_34%),radial-gradient(circle_at_100%_0%,#fce7f3_0,transparent_28%),linear-gradient(180deg,#fbfcff_0%,#eef2ff_100%)]" />
+
+      <section className="mx-auto flex w-full max-w-2xl flex-col gap-5 px-4 pb-[calc(6rem+env(safe-area-inset-bottom))] pt-5 sm:px-6">
+        <header className="flex items-center justify-between gap-4">
+          <Link
+            href="/"
+            className="grid h-11 w-11 place-items-center rounded-full bg-white/80 text-slate-700 shadow-sm shadow-slate-200 backdrop-blur-xl transition hover:bg-white"
+            aria-label="返回首頁"
+          >
+            <BackIcon />
+          </Link>
+          <div className="text-center">
+            <p className="text-sm font-medium text-slate-500">自動扣款</p>
+            <h1 className="text-2xl font-semibold tracking-normal">固定支出</h1>
+          </div>
+          <button
+            type="button"
+            onClick={openCreateForm}
+            className="grid h-11 w-11 place-items-center rounded-full bg-slate-950 text-xl font-semibold text-white shadow-lg shadow-slate-300/80 transition active:scale-[0.98]"
+            aria-label="新增固定支出"
+          >
+            +
+          </button>
+        </header>
+
+        <section className="grid grid-cols-2 gap-3">
+          <article className="rounded-[28px] border border-white/75 bg-white/80 p-4 shadow-sm shadow-slate-200/80 backdrop-blur-xl">
+            <p className="text-sm font-medium text-slate-500">每月固定支出</p>
+            <p className="mt-2 text-xl font-semibold text-slate-950">
+              {formatMoney(monthlyTotal)}
+            </p>
+          </article>
+          <article className="rounded-[28px] border border-white/75 bg-white/80 p-4 shadow-sm shadow-slate-200/80 backdrop-blur-xl">
+            <p className="text-sm font-medium text-slate-500">啟用規則</p>
+            <p className="mt-2 text-xl font-semibold text-violet-700">
+              {enabledCount} / {rules.length}
+            </p>
+          </article>
+        </section>
+
+        <section className="rounded-[32px] border border-white/75 bg-white/80 p-5 shadow-sm shadow-slate-200/80 backdrop-blur-xl">
+          <div className="flex items-center justify-between gap-4">
+            <div>
+              <p className="text-sm font-medium text-slate-500">固定支出清單</p>
+              <h2 className="mt-1 text-xl font-semibold tracking-normal">
+                {rules.length} 筆規則
+              </h2>
+            </div>
+            <button
+              type="button"
+              onClick={openCreateForm}
+              className="rounded-full bg-slate-950 px-4 py-2 text-sm font-medium text-white shadow-lg shadow-slate-300/80 transition active:scale-[0.98]"
+            >
+              新增固定支出
+            </button>
+          </div>
+
+          <div className="mt-5 grid gap-3">
+            {rules.map((rule) => {
+              const categoryName =
+                categories.find((category) => category.id === rule.categoryId)
+                  ?.name ?? rule.category;
+
+              return (
+              <article
+                key={rule.id}
+                className="rounded-[26px] bg-slate-50/80 p-4"
+              >
+                <div className="flex items-start justify-between gap-4">
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2">
+                      <p className="truncate text-base font-semibold text-slate-950">
+                        {rule.name}
+                      </p>
+                      <span
+                        className={`rounded-full px-2 py-0.5 text-xs font-medium ${
+                          rule.status === "active"
+                            ? "bg-emerald-50 text-emerald-700"
+                            : "bg-slate-200 text-slate-500"
+                        }`}
+                      >
+                        {rule.status === "active" ? "啟用" : "已暫停"}
+                      </span>
+                    </div>
+                    <p className="mt-1 text-sm font-medium text-slate-400">
+                      {categoryName} · {rule.nature} · {rule.necessity}
+                    </p>
+                    <p className="mt-1 text-xs font-medium text-slate-400">
+                      開始 {formatDate(rule.startDate)}
+                    </p>
+                  </div>
+                  <div className="shrink-0 text-right">
+                    <p className="text-base font-semibold text-slate-950">
+                      {formatMoney(rule.amount)}
+                    </p>
+                    <p className="mt-1 text-xs font-medium text-slate-400">
+                      {formatFrequency(rule.frequency)}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="mt-4 flex items-center justify-between gap-4">
+                  <div>
+                    <p className="text-xs font-medium text-slate-400">
+                      下次執行日
+                    </p>
+                    <p className="mt-1 text-sm font-semibold text-slate-700">
+                      {formatDate(rule.nextRunDate)}
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => openEditForm(rule)}
+                      className="rounded-full bg-white px-3 py-1.5 text-sm font-medium text-slate-700 shadow-sm shadow-slate-200 transition active:scale-[0.98]"
+                    >
+                      編輯
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => deleteRule(rule)}
+                      className="rounded-full bg-rose-50 px-3 py-1.5 text-sm font-medium text-rose-600 transition active:scale-[0.98]"
+                    >
+                      刪除
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => toggleRule(rule.id)}
+                      className={`relative h-8 w-14 rounded-full p-1 transition ${
+                        rule.status === "active" ? "bg-emerald-500" : "bg-slate-300"
+                      }`}
+                      aria-pressed={rule.status === "active"}
+                      aria-label={`${rule.name}${rule.status === "active" ? "暫停" : "啟用"}`}
+                    >
+                      <span
+                        className={`block h-6 w-6 rounded-full bg-white shadow-sm transition ${
+                          rule.status === "active" ? "translate-x-6" : "translate-x-0"
+                        }`}
+                      />
+                    </button>
+                  </div>
+                </div>
+              </article>
+              );
+            })}
+          </div>
+        </section>
+      </section>
+
+      <nav className="fixed inset-x-0 bottom-0 z-20 border-t border-white/80 bg-white/85 px-5 pb-[max(0.9rem,env(safe-area-inset-bottom))] pt-3 shadow-[0_-12px_32px_rgba(15,23,42,0.08)] backdrop-blur-2xl sm:hidden">
+        <div className="mx-auto grid max-w-lg grid-cols-5 text-xs font-medium">
+          <Link href="/" className="flex flex-col items-center gap-1 text-slate-400">
+            <span className="grid h-9 w-12 place-items-center rounded-full">
+              <WalletIcon />
+            </span>
+            首頁
+          </Link>
+          <Link
+            href="/categories"
+            className="flex flex-col items-center gap-1 text-slate-400"
+          >
+            <span className="grid h-9 w-12 place-items-center rounded-full">
+              <CategoriesIcon />
+            </span>
+            分類
+          </Link>
+          <Link
+            href="/add"
+            className="flex flex-col items-center gap-1 text-slate-400"
+          >
+            <span className="grid h-9 w-12 place-items-center rounded-full">
+              <CardIcon />
+            </span>
+            記帳
+          </Link>
+          <Link
+            href="/recurring"
+            className="flex flex-col items-center gap-1 text-slate-950"
+          >
+            <span className="grid h-9 w-12 place-items-center rounded-full bg-slate-950 text-white">
+              <RepeatIcon />
+            </span>
+            固定支出
+          </Link>
+          <Link href="#" className="flex flex-col items-center gap-1 text-slate-400">
+            <span className="grid h-9 w-12 place-items-center rounded-full">
+              <ChartIcon />
+            </span>
+            分析
+          </Link>
+        </div>
+      </nav>
+
+      {editingRule ? (
+        <div className="fixed inset-0 z-30 flex items-end bg-slate-950/30 px-3 pb-3 backdrop-blur-sm sm:items-center sm:justify-center">
+          <form
+            onSubmit={saveRule}
+            className="max-h-[88vh] w-full max-w-xl overflow-y-auto rounded-[32px] border border-white/80 bg-white p-5 shadow-2xl shadow-slate-950/20"
+          >
+            <div className="mb-5 flex items-center justify-between gap-4">
+              <div>
+                <p className="text-sm font-medium text-slate-500">
+                  固定支出規則
+                </p>
+                <h2 className="mt-1 text-2xl font-semibold tracking-normal">
+                  {editingRule.id ? "編輯固定支出" : "新增固定支出"}
+                </h2>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setEditingRule(null);
+                  setAmountKeyboardOpen(false);
+                }}
+                className="grid h-10 w-10 place-items-center rounded-full bg-slate-100 text-lg font-semibold text-slate-500"
+                aria-label="關閉"
+              >
+                ×
+              </button>
+            </div>
+
+            <div className="grid gap-3">
+              <label className="grid gap-2">
+                <span className="text-sm font-medium text-slate-500">名稱</span>
+                <input
+                  value={editingRule.name}
+                  onChange={(event) =>
+                    updateEditingRule("name", event.target.value)
+                  }
+                  className="h-12 rounded-[20px] bg-slate-50 px-4 text-base font-medium outline-none focus:bg-white focus:ring-2 focus:ring-slate-200"
+                  placeholder="例如：房租"
+                />
+              </label>
+
+              <div className="grid grid-cols-2 gap-3">
+                <label className="grid gap-2">
+                  <span className="text-sm font-medium text-slate-500">類型</span>
+                  <select
+                    value={editingRule.type}
+                    onChange={(event) =>
+                      updateEditingRule("type", event.target.value)
+                    }
+                    className="h-12 rounded-[20px] bg-slate-50 px-4 text-base font-medium outline-none focus:bg-white focus:ring-2 focus:ring-slate-200"
+                  >
+                    {typeOptions.map((item) => (
+                      <option key={item} value={item}>
+                        {item}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+
+                <label className="grid gap-2">
+                  <span className="text-sm font-medium text-slate-500">分類</span>
+                  <select
+                    value={editingRule.category}
+                    onChange={(event) =>
+                      updateEditingRule("category", event.target.value)
+                    }
+                    className="h-12 rounded-[20px] bg-slate-50 px-4 text-base font-medium outline-none focus:bg-white focus:ring-2 focus:ring-slate-200"
+                  >
+                    {[...expenseCategories.map((item) => item.name), "其他"].map(
+                      (item) => (
+                        <option key={item} value={item}>
+                          {item}
+                        </option>
+                      ),
+                    )}
+                  </select>
+                </label>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <label className="grid gap-2">
+                  <span className="text-sm font-medium text-slate-500">
+                    支出性質
+                  </span>
+                  <select
+                    value={editingRule.nature}
+                    onChange={(event) =>
+                      updateEditingRule("nature", event.target.value)
+                    }
+                    className="h-12 rounded-[20px] bg-slate-50 px-4 text-base font-medium outline-none focus:bg-white focus:ring-2 focus:ring-slate-200"
+                  >
+                    {natureOptions.map((item) => (
+                      <option key={item} value={item}>
+                        {item}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+
+                <label className="grid gap-2">
+                  <span className="text-sm font-medium text-slate-500">
+                    必要性
+                  </span>
+                  <select
+                    value={editingRule.necessity}
+                    onChange={(event) =>
+                      updateEditingRule("necessity", event.target.value)
+                    }
+                    className="h-12 rounded-[20px] bg-slate-50 px-4 text-base font-medium outline-none focus:bg-white focus:ring-2 focus:ring-slate-200"
+                  >
+                    {necessityOptions.map((item) => (
+                      <option key={item} value={item}>
+                        {item}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+
+              <div className="grid gap-3">
+                <div className="grid gap-2">
+                  <span className="text-sm font-medium text-slate-500">金額</span>
+                  <button
+                    type="button"
+                    onClick={() => setAmountKeyboardOpen(true)}
+                    className="flex min-h-20 items-center justify-between rounded-[24px] bg-slate-50 px-4 text-left transition active:scale-[0.99]"
+                  >
+                    <span className="text-xl font-semibold text-slate-400">
+                      NT$
+                    </span>
+                    <span className="min-w-0 flex-1 truncate text-right text-4xl font-semibold tracking-normal text-slate-950">
+                      {formatAmountDisplay(editingRule.amount)}
+                    </span>
+                  </button>
+                </div>
+
+                <label className="grid gap-2">
+                  <span className="text-sm font-medium text-slate-500">週期</span>
+                  <select
+                    value={editingRule.frequency}
+                    onChange={(event) =>
+                      updateEditingRule("frequency", event.target.value)
+                    }
+                    className="h-12 rounded-[20px] bg-slate-50 px-4 text-base font-medium outline-none focus:bg-white focus:ring-2 focus:ring-slate-200"
+                  >
+                    {frequencyOptions.map((item) => (
+                      <option key={item} value={item}>
+                        {formatFrequency(item)}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <label className="grid gap-2">
+                  <span className="text-sm font-medium text-slate-500">
+                    開始日期
+                  </span>
+                  <input
+                    type="date"
+                    value={editingRule.startDate}
+                    onChange={(event) =>
+                      updateEditingRule("startDate", event.target.value)
+                    }
+                    className="h-12 rounded-[20px] bg-slate-50 px-4 text-base font-medium outline-none focus:bg-white focus:ring-2 focus:ring-slate-200"
+                  />
+                </label>
+
+                <label className="grid gap-2">
+                  <span className="text-sm font-medium text-slate-500">
+                    下次執行日
+                  </span>
+                  <input
+                    type="date"
+                    value={editingRule.nextRunDate}
+                    onChange={(event) =>
+                      updateEditingRule("nextRunDate", event.target.value)
+                    }
+                    className="h-12 rounded-[20px] bg-slate-50 px-4 text-base font-medium outline-none focus:bg-white focus:ring-2 focus:ring-slate-200"
+                  />
+                </label>
+              </div>
+
+              <p className="rounded-[18px] bg-blue-50 px-4 py-3 text-xs font-medium leading-5 text-blue-700">
+                下次執行日會依開始日期與週期自動建議；手動修改後，系統會保留你的設定。重新啟用後，將從新的下次執行日開始計算，不會補記停用期間。
+              </p>
+
+              <div className="flex items-center justify-between rounded-[22px] bg-slate-50 p-4">
+                <div>
+                  <p className="text-sm font-semibold text-slate-950">
+                    啟用狀態
+                  </p>
+                  <p className="mt-1 text-xs font-medium text-slate-400">
+                    停用只會暫停規則，不會產生交易或回溯補記
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={toggleEditingEnabled}
+                  className={`relative h-8 w-14 rounded-full p-1 transition ${
+                    editingRule.enabled ? "bg-emerald-500" : "bg-slate-300"
+                  }`}
+                  aria-pressed={editingRule.enabled}
+                >
+                  <span
+                    className={`block h-6 w-6 rounded-full bg-white shadow-sm transition ${
+                      editingRule.enabled ? "translate-x-6" : "translate-x-0"
+                    }`}
+                  />
+                </button>
+              </div>
+            </div>
+
+            <div className="mt-5 grid grid-cols-2 gap-3">
+              <button
+                type="button"
+                onClick={() => {
+                  setEditingRule(null);
+                  setAmountKeyboardOpen(false);
+                }}
+                className="h-13 rounded-full bg-slate-100 text-base font-semibold text-slate-600"
+              >
+                取消
+              </button>
+              <button
+                type="submit"
+                className="h-13 rounded-full bg-slate-950 text-base font-semibold text-white shadow-lg shadow-slate-300/80"
+              >
+                儲存
+              </button>
+            </div>
+
+            {amountKeyboardOpen ? (
+              <div className="sticky bottom-0 -mx-5 -mb-5 mt-5 border-t border-slate-100 bg-white/95 px-5 pb-5 pt-3 backdrop-blur-xl">
+                <div className="mb-3 flex items-center justify-between">
+                  <p className="text-sm font-semibold text-slate-500">
+                    輸入金額
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => setAmountKeyboardOpen(false)}
+                    className="rounded-full bg-slate-100 px-3 py-1.5 text-sm font-medium text-slate-600"
+                  >
+                    確認
+                  </button>
+                </div>
+                <div className="grid grid-cols-3 gap-2">
+                  {calculatorKeys.map((key) => (
+                    <button
+                      key={key}
+                      type="button"
+                      onClick={() => handleCalculatorTap(key)}
+                      className="flex h-13 items-center justify-center rounded-[22px] bg-slate-50 text-2xl font-semibold text-slate-950 shadow-sm shadow-slate-200 transition active:scale-[0.98] active:bg-slate-100"
+                    >
+                      {key}
+                    </button>
+                  ))}
+                  <button
+                    type="button"
+                    onClick={clearAmount}
+                    className="flex h-13 items-center justify-center rounded-[22px] bg-slate-100 text-base font-semibold text-slate-700 shadow-sm shadow-slate-200 transition active:scale-[0.98] active:bg-slate-200"
+                  >
+                    清空
+                  </button>
+                  <button
+                    type="button"
+                    onClick={deleteAmountDigit}
+                    className="flex h-13 items-center justify-center rounded-[22px] bg-slate-100 text-2xl font-semibold text-slate-700 shadow-sm shadow-slate-200 transition active:scale-[0.98] active:bg-slate-200"
+                    aria-label="刪除金額"
+                  >
+                    ⌫
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setAmountKeyboardOpen(false)}
+                    className="flex h-13 items-center justify-center rounded-[22px] bg-slate-950 text-base font-semibold text-white shadow-lg shadow-slate-300/80 transition active:scale-[0.98]"
+                  >
+                    確認
+                  </button>
+                </div>
+              </div>
+            ) : null}
+          </form>
+        </div>
+      ) : null}
+    </main>
+  );
+}
