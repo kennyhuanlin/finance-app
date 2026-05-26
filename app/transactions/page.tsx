@@ -1,9 +1,14 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useCategories } from "../categories-context";
-import { transactions as initialTransactions } from "../data";
+import { formatCategoryLabel } from "../lib/categories";
+import {
+  deleteTransaction as deleteSheetTransaction,
+  getTransactions,
+  updateTransaction,
+} from "../lib/googleSheets";
 
 type Transaction = {
   id: string;
@@ -18,6 +23,7 @@ type Transaction = {
   expenseType: string | null;
   nature: string;
   necessity: string;
+  createdAt?: string;
 };
 
 type TransactionForm = Omit<Transaction, "amount"> & {
@@ -27,7 +33,6 @@ type TransactionForm = Omit<Transaction, "amount"> & {
 const typeOptions = ["支出", "收入"];
 const natureOptions = ["日常支出", "固定支出", "家庭支出", "一次性支出", "收入"];
 const necessityOptions = ["必要", "重要", "可調整", "可取消"];
-const incomeCategories = ["薪資", "收入-補助", "投資收入", "其他收入"];
 const calculatorKeys = ["1", "2", "3", "4", "5", "6", "7", "8", "9", ".", "0"];
 
 function formatMoney(value: number) {
@@ -61,6 +66,69 @@ function formatDate(date: string) {
   }).format(new Date(date));
 }
 
+function isIncomeTransaction(transaction: Transaction) {
+  return transaction.type === "收入" || transaction.type === "income";
+}
+
+function isExpenseTransaction(transaction: Transaction) {
+  return transaction.type === "支出" || transaction.type === "expense";
+}
+
+function normalizeTransaction(
+  transaction: Record<string, unknown>,
+  index: number,
+): Transaction {
+  const type = String(transaction.type ?? "");
+  const sourceType = String(transaction.sourceType ?? "manual");
+  const expenseType =
+    transaction.expenseType === undefined || transaction.expenseType === null
+      ? null
+      : String(transaction.expenseType);
+
+  return {
+    id: String(transaction.id ?? `sheet-tx-${index}`),
+    date: String(transaction.date ?? ""),
+    type,
+    category: String(transaction.category ?? ""),
+    categoryId:
+      transaction.categoryId === undefined
+        ? undefined
+        : String(transaction.categoryId),
+    amount: Number(transaction.amount ?? 0),
+    note: String(transaction.note ?? ""),
+    sourceType,
+    recurringId:
+      transaction.recurringId === undefined || transaction.recurringId === null
+        ? null
+        : String(transaction.recurringId),
+    expenseType,
+    nature:
+      String(transaction.nature ?? "") ||
+      (sourceType === "recurring"
+        ? "固定支出"
+        : type === "收入" || type === "income"
+          ? "收入"
+          : "日常支出"),
+    necessity:
+      String(transaction.necessity ?? "") ||
+      (sourceType === "recurring"
+        ? "必要"
+        : type === "收入" || type === "income"
+          ? "重要"
+          : "必要"),
+    createdAt:
+      transaction.createdAt === undefined
+        ? undefined
+        : String(transaction.createdAt),
+  };
+}
+
+function sortTransactionsByDate(sourceTransactions: Transaction[]) {
+  return [...sourceTransactions].sort((a, b) =>
+    (b.createdAt || b.date).localeCompare(a.createdAt || a.date),
+  );
+}
+
 function BackIcon() {
   return (
     <svg
@@ -79,46 +147,49 @@ function BackIcon() {
 export default function TransactionsPage() {
   const { categories } = useCategories();
   const expenseCategories = categories.filter((item) => item.type === "expense");
-  const incomeCategoryOptions = categories
-    .filter((item) => item.type === "income")
-    .map((item) => item.name);
-  const [transactions, setTransactions] = useState<Transaction[]>(
-    initialTransactions.map((item) => ({
-      ...item,
-      nature:
-        item.sourceType === "recurring"
-          ? "固定支出"
-          : item.type === "收入"
-            ? "收入"
-            : "日常支出",
-      necessity: item.sourceType === "recurring" ? "必要" : item.type === "收入" ? "重要" : "必要",
-    })),
-  );
+  const incomeCategories = categories.filter((item) => item.type === "income");
+  const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [editingTransaction, setEditingTransaction] =
     useState<TransactionForm | null>(null);
   const [amountKeyboardOpen, setAmountKeyboardOpen] = useState(false);
 
+  async function fetchTransactions() {
+    const sheetTransactions = await getTransactions<Record<string, unknown>>();
+
+    setTransactions(
+      sortTransactionsByDate(
+        sheetTransactions.map((transaction, index) =>
+          normalizeTransaction(transaction, index),
+        ),
+      ),
+    );
+  }
+
+  useEffect(() => {
+    fetchTransactions().catch(() => {
+      setTransactions([]);
+    });
+  }, []);
+
   const incomeTotal = useMemo(
     () =>
       transactions
-        .filter((item) => item.type === "收入")
+        .filter(isIncomeTransaction)
         .reduce((sum, item) => sum + item.amount, 0),
     [transactions],
   );
   const expenseTotal = useMemo(
     () =>
       transactions
-        .filter((item) => item.type === "支出")
+        .filter(isExpenseTransaction)
         .reduce((sum, item) => sum + item.amount, 0),
     [transactions],
   );
 
   const categoryOptions =
     editingTransaction?.type === "收入"
-      ? incomeCategoryOptions.length > 0
-        ? incomeCategoryOptions
-        : incomeCategories
-      : expenseCategories.map((item) => item.name);
+      ? incomeCategories
+      : expenseCategories;
 
   function openEditForm(transaction: Transaction) {
     if (transaction.sourceType === "recurring") {
@@ -145,14 +216,29 @@ export default function TransactionsPage() {
         const nextType = String(value);
         const nextCategory =
           nextType === "收入"
-            ? incomeCategoryOptions[0] ?? incomeCategories[0]
-            : expenseCategories[0]?.name ?? "其他";
+            ? incomeCategories[0]?.name ?? ""
+            : expenseCategories[0]?.name ?? "";
 
         return {
           ...current,
           type: nextType,
           category: nextCategory,
+          categoryId:
+            nextType === "收入"
+              ? incomeCategories.find((item) => item.name === nextCategory)?.id
+              : expenseCategories.find((item) => item.name === nextCategory)
+                  ?.id,
           nature: nextType === "收入" ? "收入" : "日常支出",
+        };
+      }
+
+      if (key === "category") {
+        const nextCategory = String(value);
+
+        return {
+          ...current,
+          category: nextCategory,
+          categoryId: categories.find((item) => item.name === nextCategory)?.id,
         };
       }
 
@@ -200,7 +286,7 @@ export default function TransactionsPage() {
     );
   }
 
-  function saveTransaction(event: React.FormEvent<HTMLFormElement>) {
+  async function saveTransaction(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
     if (
@@ -217,16 +303,27 @@ export default function TransactionsPage() {
       amount: Number(editingTransaction.amount),
     };
 
-    setTransactions((current) =>
-      current.map((item) =>
-        item.id === nextTransaction.id ? nextTransaction : item,
-      ),
-    );
+    await updateTransaction(nextTransaction.id, {
+      id: nextTransaction.id,
+      createdAt: nextTransaction.createdAt ?? "",
+      date: nextTransaction.date,
+      type: nextTransaction.type,
+      expenseType: nextTransaction.expenseType ?? "",
+      nature: nextTransaction.nature,
+      necessity: nextTransaction.necessity,
+      category: nextTransaction.category,
+      categoryId: nextTransaction.categoryId ?? "",
+      amount: Number(nextTransaction.amount),
+      note: nextTransaction.note,
+      sourceType: nextTransaction.sourceType,
+      recurringId: nextTransaction.recurringId ?? "",
+    });
+    await fetchTransactions();
     setEditingTransaction(null);
     setAmountKeyboardOpen(false);
   }
 
-  function deleteTransaction(transaction: Transaction) {
+  async function deleteTransaction(transaction: Transaction) {
     const message =
       transaction.sourceType === "recurring"
         ? `確定要刪除「${transaction.note}」嗎？這只會刪除此筆交易，不會刪除固定支出規則。`
@@ -237,9 +334,8 @@ export default function TransactionsPage() {
       return;
     }
 
-    setTransactions((current) =>
-      current.filter((item) => item.id !== transaction.id),
-    );
+    await deleteSheetTransaction(transaction.id);
+    await fetchTransactions();
   }
 
   return (
@@ -295,7 +391,7 @@ export default function TransactionsPage() {
 
           <div className="mt-5 divide-y divide-slate-100">
             {transactions.map((item) => {
-              const isIncome = item.type === "收入";
+              const isIncome = isIncomeTransaction(item);
               const isRecurring = item.sourceType === "recurring";
               const categoryName =
                 categories.find((category) => category.id === item.categoryId)
@@ -422,8 +518,8 @@ export default function TransactionsPage() {
                     }
                     className="h-12 rounded-[20px] bg-slate-50 px-4 text-base font-medium outline-none focus:bg-white focus:ring-2 focus:ring-slate-200"
                   >
-                    {typeOptions.map((item) => (
-                      <option key={item} value={item}>
+                    {typeOptions.map((item, index) => (
+                      <option key={`${item}-${index}`} value={item}>
                         {item}
                       </option>
                     ))}
@@ -443,8 +539,8 @@ export default function TransactionsPage() {
                     }
                     className="h-12 rounded-[20px] bg-slate-50 px-4 text-base font-medium outline-none focus:bg-white focus:ring-2 focus:ring-slate-200"
                   >
-                    {natureOptions.map((item) => (
-                      <option key={item} value={item}>
+                    {natureOptions.map((item, index) => (
+                      <option key={`${item}-${index}`} value={item}>
                         {item}
                       </option>
                     ))}
@@ -462,8 +558,8 @@ export default function TransactionsPage() {
                     }
                     className="h-12 rounded-[20px] bg-slate-50 px-4 text-base font-medium outline-none focus:bg-white focus:ring-2 focus:ring-slate-200"
                   >
-                    {necessityOptions.map((item) => (
-                      <option key={item} value={item}>
+                    {necessityOptions.map((item, index) => (
+                      <option key={`${item}-${index}`} value={item}>
                         {item}
                       </option>
                     ))}
@@ -480,9 +576,9 @@ export default function TransactionsPage() {
                   }
                   className="h-12 rounded-[20px] bg-slate-50 px-4 text-base font-medium outline-none focus:bg-white focus:ring-2 focus:ring-slate-200"
                 >
-                  {[...categoryOptions, "其他"].map((item) => (
-                    <option key={item} value={item}>
-                      {item}
+                  {categoryOptions.map((item, index) => (
+                    <option key={`${item.id}-${index}`} value={item.name}>
+                      {formatCategoryLabel(item)}
                     </option>
                   ))}
                 </select>

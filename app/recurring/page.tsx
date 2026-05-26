@@ -1,9 +1,10 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useCategories } from "../categories-context";
-import { recurringRules } from "../data";
+import { formatCategoryLabel } from "../lib/categories";
+import { createRecurringRule, getRecurringRules } from "../lib/googleSheets";
 
 type RecurringRule = {
   id: string;
@@ -15,6 +16,9 @@ type RecurringRule = {
   category: string;
   amount: number;
   frequency: string;
+  expenseType: string;
+  note: string;
+  lastRunDate: string;
   startDate: string;
   nextRunDate: string;
   status: "active" | "paused";
@@ -41,6 +45,9 @@ const emptyForm: RuleForm = {
   category: "住房",
   amount: "",
   frequency: "monthly",
+  expenseType: "固定",
+  note: "",
+  lastRunDate: "",
   startDate: "2026-05-26",
   nextRunDate: "2026-06-01",
   status: "active",
@@ -112,11 +119,47 @@ function addPeriod(date: string, frequency: string) {
 }
 
 function formatDate(date: string) {
+  if (!date) {
+    return "未設定";
+  }
+
   return new Intl.DateTimeFormat("zh-TW", {
     year: "numeric",
     month: "long",
     day: "numeric",
   }).format(new Date(date));
+}
+
+function normalizeRecurringRule(
+  rule: Record<string, unknown>,
+  index: number,
+): RecurringRule {
+  const frequency = String(rule.frequency ?? "monthly");
+  const startDate = String(rule.startDate ?? todayString());
+  const enabled =
+    rule.enabled === true ||
+    String(rule.enabled ?? "true").toLowerCase() === "true";
+
+  return {
+    id: String(rule.id ?? `recurring-${index}`),
+    name: String(rule.name ?? ""),
+    type: String(rule.type ?? "支出"),
+    nature: String(rule.nature ?? "固定扣款"),
+    necessity: String(rule.necessity ?? "必要"),
+    categoryId:
+      rule.categoryId === undefined ? undefined : String(rule.categoryId),
+    category: String(rule.category ?? ""),
+    amount: Number(rule.amount ?? 0),
+    frequency,
+    expenseType: String(rule.expenseType ?? "固定"),
+    note: String(rule.note ?? ""),
+    lastRunDate: String(rule.lastRunDate ?? ""),
+    startDate,
+    nextRunDate: String(rule.nextRunDate ?? addPeriod(startDate, frequency)),
+    status: enabled ? "active" : "paused",
+    enabled,
+    manualNextRunDate: false,
+  };
 }
 
 function BackIcon() {
@@ -233,25 +276,41 @@ function CategoriesIcon() {
 export default function RecurringPage() {
   const { categories } = useCategories();
   const expenseCategories = categories.filter((item) => item.type === "expense");
-  const [rules, setRules] = useState<RecurringRule[]>(
-    recurringRules.map((rule, index) => {
-      const startDate = `2026-05-${String(index + 1).padStart(2, "0")}`;
-
-      return {
-        ...rule,
-        id: rule.id,
-        type: "支出",
-        nature: rule.category === "訂閱" ? "訂閱服務" : "固定扣款",
-        necessity: rule.category === "訂閱" ? "可調整" : "必要",
-        startDate,
-        nextRunDate: addPeriod(startDate, rule.frequency),
-        status: rule.enabled ? "active" : "paused",
-        manualNextRunDate: false,
-      };
-    }),
-  );
+  const [rules, setRules] = useState<RecurringRule[]>([]);
   const [editingRule, setEditingRule] = useState<RuleForm | null>(null);
   const [amountKeyboardOpen, setAmountKeyboardOpen] = useState(false);
+  const [statusMessage, setStatusMessage] = useState("");
+  const [isLoading, setIsLoading] = useState(true);
+  const [isSaving, setIsSaving] = useState(false);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    getRecurringRules<Record<string, unknown>>()
+      .then((sheetRules) => {
+        if (!isMounted) {
+          return;
+        }
+
+        setRules(
+          sheetRules.map((rule, index) => normalizeRecurringRule(rule, index)),
+        );
+      })
+      .catch(() => {
+        if (isMounted) {
+          setStatusMessage("固定支出資料讀取失敗");
+        }
+      })
+      .finally(() => {
+        if (isMounted) {
+          setIsLoading(false);
+        }
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
 
   const enabledCount = rules.filter((rule) => rule.status === "active").length;
   const monthlyTotal = useMemo(
@@ -395,15 +454,21 @@ export default function RecurringPage() {
     });
   }
 
-  function saveRule(event: React.FormEvent<HTMLFormElement>) {
+  async function saveRule(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
-    if (!editingRule || !editingRule.name.trim() || Number(editingRule.amount) <= 0) {
+    if (
+      !editingRule ||
+      !editingRule.name.trim() ||
+      Number(editingRule.amount) <= 0 ||
+      isSaving
+    ) {
       return;
     }
 
+    const id = editingRule.id ?? `recurring-${Date.now()}`;
     const nextRule: RecurringRule = {
-      id: editingRule.id ?? `rule-${Date.now()}`,
+      id,
       name: editingRule.name.trim(),
       type: editingRule.type,
       nature: editingRule.nature,
@@ -414,6 +479,9 @@ export default function RecurringPage() {
           ?.id ?? editingRule.categoryId,
       amount: Number(editingRule.amount),
       frequency: editingRule.frequency,
+      expenseType: "固定",
+      note: editingRule.note,
+      lastRunDate: editingRule.lastRunDate,
       startDate: editingRule.startDate,
       nextRunDate: editingRule.nextRunDate,
       status: editingRule.enabled ? "active" : "paused",
@@ -421,13 +489,39 @@ export default function RecurringPage() {
       manualNextRunDate: editingRule.manualNextRunDate,
     };
 
-    setRules((current) =>
-      editingRule.id
-        ? current.map((rule) => (rule.id === editingRule.id ? nextRule : rule))
-        : [nextRule, ...current],
-    );
-    setEditingRule(null);
-    setAmountKeyboardOpen(false);
+    setIsSaving(true);
+    setStatusMessage("");
+
+    try {
+      if (!editingRule.id) {
+        await createRecurringRule({
+          id: nextRule.id,
+          name: nextRule.name,
+          type: nextRule.type,
+          expenseType: nextRule.expenseType,
+          necessity: nextRule.necessity,
+          category: nextRule.category,
+          amount: nextRule.amount,
+          frequency: nextRule.frequency,
+          nextRunDate: nextRule.nextRunDate,
+          enabled: nextRule.enabled,
+          note: nextRule.note,
+          lastRunDate: nextRule.lastRunDate,
+        });
+      }
+
+      setRules((current) =>
+        editingRule.id
+          ? current.map((rule) => (rule.id === editingRule.id ? nextRule : rule))
+          : [nextRule, ...current],
+      );
+      setEditingRule(null);
+      setAmountKeyboardOpen(false);
+    } catch {
+      setStatusMessage("固定支出儲存失敗");
+    } finally {
+      setIsSaving(false);
+    }
   }
 
   function deleteRule(rule: RecurringRule) {
@@ -467,6 +561,12 @@ export default function RecurringPage() {
           </button>
         </header>
 
+        {statusMessage ? (
+          <p className="rounded-[22px] bg-rose-50 px-4 py-3 text-sm font-medium text-rose-600">
+            {statusMessage}
+          </p>
+        ) : null}
+
         <section className="grid grid-cols-2 gap-3">
           <article className="rounded-[28px] border border-white/75 bg-white/80 p-4 shadow-sm shadow-slate-200/80 backdrop-blur-xl">
             <p className="text-sm font-medium text-slate-500">每月固定支出</p>
@@ -487,7 +587,7 @@ export default function RecurringPage() {
             <div>
               <p className="text-sm font-medium text-slate-500">固定支出清單</p>
               <h2 className="mt-1 text-xl font-semibold tracking-normal">
-                {rules.length} 筆規則
+                {isLoading ? "讀取中" : `${rules.length} 筆規則`}
               </h2>
             </div>
             <button
@@ -500,6 +600,18 @@ export default function RecurringPage() {
           </div>
 
           <div className="mt-5 grid gap-3">
+            {isLoading ? (
+              <p className="rounded-[24px] bg-slate-50/80 p-4 text-sm font-medium text-slate-400">
+                正在讀取 Google Sheets...
+              </p>
+            ) : null}
+
+            {!isLoading && rules.length === 0 ? (
+              <p className="rounded-[24px] bg-slate-50/80 p-4 text-sm font-medium text-slate-400">
+                尚未建立固定支出
+              </p>
+            ) : null}
+
             {rules.map((rule) => {
               const categoryName =
                 categories.find((category) => category.id === rule.categoryId)
@@ -626,7 +738,7 @@ export default function RecurringPage() {
             </span>
             固定支出
           </Link>
-          <Link href="#" className="flex flex-col items-center gap-1 text-slate-400">
+          <Link href="/analytics" className="flex flex-col items-center gap-1 text-slate-400">
             <span className="grid h-9 w-12 place-items-center rounded-full">
               <ChartIcon />
             </span>
@@ -686,8 +798,8 @@ export default function RecurringPage() {
                     }
                     className="h-12 rounded-[20px] bg-slate-50 px-4 text-base font-medium outline-none focus:bg-white focus:ring-2 focus:ring-slate-200"
                   >
-                    {typeOptions.map((item) => (
-                      <option key={item} value={item}>
+                    {typeOptions.map((item, index) => (
+                      <option key={`${item}-${index}`} value={item}>
                         {item}
                       </option>
                     ))}
@@ -703,10 +815,10 @@ export default function RecurringPage() {
                     }
                     className="h-12 rounded-[20px] bg-slate-50 px-4 text-base font-medium outline-none focus:bg-white focus:ring-2 focus:ring-slate-200"
                   >
-                    {[...expenseCategories.map((item) => item.name), "其他"].map(
-                      (item) => (
-                        <option key={item} value={item}>
-                          {item}
+                    {expenseCategories.map(
+                      (item, index) => (
+                        <option key={`${item.id}-${index}`} value={item.name}>
+                          {formatCategoryLabel(item)}
                         </option>
                       ),
                     )}
@@ -726,8 +838,8 @@ export default function RecurringPage() {
                     }
                     className="h-12 rounded-[20px] bg-slate-50 px-4 text-base font-medium outline-none focus:bg-white focus:ring-2 focus:ring-slate-200"
                   >
-                    {natureOptions.map((item) => (
-                      <option key={item} value={item}>
+                    {natureOptions.map((item, index) => (
+                      <option key={`${item}-${index}`} value={item}>
                         {item}
                       </option>
                     ))}
@@ -745,8 +857,8 @@ export default function RecurringPage() {
                     }
                     className="h-12 rounded-[20px] bg-slate-50 px-4 text-base font-medium outline-none focus:bg-white focus:ring-2 focus:ring-slate-200"
                   >
-                    {necessityOptions.map((item) => (
-                      <option key={item} value={item}>
+                    {necessityOptions.map((item, index) => (
+                      <option key={`${item}-${index}`} value={item}>
                         {item}
                       </option>
                     ))}
@@ -780,8 +892,8 @@ export default function RecurringPage() {
                     }
                     className="h-12 rounded-[20px] bg-slate-50 px-4 text-base font-medium outline-none focus:bg-white focus:ring-2 focus:ring-slate-200"
                   >
-                    {frequencyOptions.map((item) => (
-                      <option key={item} value={item}>
+                    {frequencyOptions.map((item, index) => (
+                      <option key={`${item}-${index}`} value={item}>
                         {formatFrequency(item)}
                       </option>
                     ))}
@@ -823,6 +935,18 @@ export default function RecurringPage() {
                 下次執行日會依開始日期與週期自動建議；手動修改後，系統會保留你的設定。重新啟用後，將從新的下次執行日開始計算，不會補記停用期間。
               </p>
 
+              <label className="grid gap-2">
+                <span className="text-sm font-medium text-slate-500">備註</span>
+                <input
+                  value={editingRule.note}
+                  onChange={(event) =>
+                    updateEditingRule("note", event.target.value)
+                  }
+                  className="h-12 rounded-[20px] bg-slate-50 px-4 text-base font-medium outline-none focus:bg-white focus:ring-2 focus:ring-slate-200"
+                  placeholder="例如：每月固定扣款"
+                />
+              </label>
+
               <div className="flex items-center justify-between rounded-[22px] bg-slate-50 p-4">
                 <div>
                   <p className="text-sm font-semibold text-slate-950">
@@ -862,9 +986,10 @@ export default function RecurringPage() {
               </button>
               <button
                 type="submit"
+                disabled={isSaving}
                 className="h-13 rounded-full bg-slate-950 text-base font-semibold text-white shadow-lg shadow-slate-300/80"
               >
-                儲存
+                {isSaving ? "儲存中..." : "儲存"}
               </button>
             </div>
 

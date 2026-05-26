@@ -1,9 +1,19 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useCategories } from "./categories-context";
-import { recurringRules, transactions } from "./data";
+import {
+  categories as fallbackCategories,
+  recurringRules,
+  transactions,
+} from "./data";
+import { dedupeCategories } from "./lib/categories";
+import {
+  getCategories,
+  getRecurringRules,
+  getTransactions,
+} from "./lib/googleSheets";
 
 const periods = ["本月", "上月", "本季", "今年", "累積餘額"] as const;
 
@@ -66,7 +76,39 @@ function formatDate(date: string) {
 }
 
 type Period = (typeof periods)[number];
-type Transaction = (typeof transactions)[number];
+type Transaction = {
+  id: string;
+  date: string;
+  type: string;
+  category: string;
+  categoryId?: string;
+  amount: number;
+  note: string;
+  sourceType?: string;
+  recurringId?: string | null;
+  expenseType?: string | null;
+  createdAt?: string;
+};
+
+type DashboardCategory = {
+  id: string;
+  name: string;
+  emoji: string;
+  type: string;
+  color: string;
+};
+
+type RecurringRule = {
+  id: string;
+  name: string;
+  type: string;
+  category: string;
+  categoryId?: string;
+  amount: number;
+  frequency: string;
+  nextRunDate?: string;
+  enabled: boolean;
+};
 
 function toDateKey(date: Date) {
   const year = date.getFullYear();
@@ -138,29 +180,99 @@ function isExpenseTransaction(transaction: Transaction) {
   return transaction.type === "支出" || transaction.type === "expense";
 }
 
-function isFixedExpenseTransaction(transaction: Transaction) {
-  return (
-    isExpenseTransaction(transaction) &&
-    (transaction.expenseType === "固定" || transaction.expenseType === "fixed")
-  );
+function isEnabled(value: unknown) {
+  return value === true || String(value).toLowerCase() === "true";
 }
 
-function calculateSummary(sourceTransactions: Transaction[]) {
+function isRecurringExpense(rule: RecurringRule) {
+  return rule.type === "支出" || rule.type === "expense";
+}
+
+function calculateSummary(
+  sourceTransactions: Transaction[],
+  sourceRecurringRules: RecurringRule[],
+) {
   const income = sourceTransactions
     .filter(isIncomeTransaction)
     .reduce((sum, transaction) => sum + transaction.amount, 0);
   const expense = sourceTransactions
     .filter(isExpenseTransaction)
     .reduce((sum, transaction) => sum + transaction.amount, 0);
-  const fixedExpense = sourceTransactions
-    .filter(isFixedExpenseTransaction)
-    .reduce((sum, transaction) => sum + transaction.amount, 0);
+  const fixedExpense = sourceRecurringRules
+    .filter((rule) => rule.enabled && isRecurringExpense(rule))
+    .reduce((sum, rule) => sum + Number(rule.amount), 0);
 
   return {
     income,
     expense,
     balance: income - expense,
     fixedExpense,
+  };
+}
+
+function normalizeTransaction(
+  transaction: Record<string, unknown>,
+  index: number,
+): Transaction {
+  return {
+    id: String(transaction.id ?? `sheet-tx-${index}`),
+    date: String(transaction.date ?? ""),
+    type: String(transaction.type ?? ""),
+    category: String(transaction.category ?? ""),
+    categoryId:
+      transaction.categoryId === undefined
+        ? undefined
+        : String(transaction.categoryId),
+    amount: Number(transaction.amount ?? 0),
+    note: String(transaction.note ?? ""),
+    sourceType:
+      transaction.sourceType === undefined
+        ? undefined
+        : String(transaction.sourceType),
+    recurringId:
+      transaction.recurringId === undefined || transaction.recurringId === null
+        ? null
+        : String(transaction.recurringId),
+    expenseType:
+      transaction.expenseType === undefined || transaction.expenseType === null
+        ? null
+        : String(transaction.expenseType),
+    createdAt:
+      transaction.createdAt === undefined
+        ? undefined
+        : String(transaction.createdAt),
+  };
+}
+
+function normalizeCategory(
+  category: Record<string, unknown>,
+  index: number,
+): DashboardCategory {
+  return {
+    id: String(category.id ?? `sheet-category-${index}`),
+    name: String(category.name ?? ""),
+    emoji: String(category.emoji ?? "📦"),
+    type: String(category.type ?? "expense"),
+    color: String(category.color ?? "#64748b"),
+  };
+}
+
+function normalizeRecurringRule(
+  rule: Record<string, unknown>,
+  index: number,
+): RecurringRule {
+  return {
+    id: String(rule.id ?? `sheet-recurring-${index}`),
+    name: String(rule.name ?? ""),
+    type: String(rule.type ?? "支出"),
+    category: String(rule.category ?? ""),
+    categoryId:
+      rule.categoryId === undefined ? undefined : String(rule.categoryId),
+    amount: Number(rule.amount ?? 0),
+    frequency: String(rule.frequency ?? ""),
+    nextRunDate:
+      rule.nextRunDate === undefined ? undefined : String(rule.nextRunDate),
+    enabled: isEnabled(rule.enabled),
   };
 }
 
@@ -261,22 +373,86 @@ function RepeatIcon() {
 }
 
 export default function Home() {
-  const { categories } = useCategories();
+  const { categories: contextCategories } = useCategories();
+  const [sourceTransactions, setSourceTransactions] = useState<Transaction[]>(
+    [],
+  );
+  const [sourceRecurringRules, setSourceRecurringRules] = useState<
+    RecurringRule[]
+  >([]);
+  const [sourceCategories, setSourceCategories] = useState<DashboardCategory[]>(
+    [],
+  );
   const [activePeriod, setActivePeriod] =
     useState<(typeof periods)[number]>("本月");
+
+  useEffect(() => {
+    let isMounted = true;
+
+    Promise.all([
+      getTransactions<Record<string, unknown>>(),
+      getRecurringRules<Record<string, unknown>>(),
+      getCategories<Record<string, unknown>>(),
+    ])
+      .then(([sheetTransactions, sheetRecurringRules, sheetCategories]) => {
+        if (!isMounted) {
+          return;
+        }
+
+        setSourceTransactions(
+          sheetTransactions.map((transaction, index) =>
+            normalizeTransaction(transaction, index),
+          ),
+        );
+        setSourceRecurringRules(
+          sheetRecurringRules.map((rule, index) =>
+            normalizeRecurringRule(rule, index),
+          ),
+        );
+        setSourceCategories(
+          dedupeCategories(
+            sheetCategories.map((category, index) =>
+              normalizeCategory(category, index),
+            ),
+          ),
+        );
+      })
+      .catch(() => {
+        if (isMounted) {
+          setSourceTransactions(transactions);
+          setSourceRecurringRules(
+            recurringRules.map((rule, index) =>
+              normalizeRecurringRule(rule as Record<string, unknown>, index),
+            ),
+          );
+          setSourceCategories(
+            contextCategories.length > 0
+              ? dedupeCategories(contextCategories)
+              : dedupeCategories(fallbackCategories),
+          );
+        }
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, [contextCategories]);
 
   const activePeriodTitle = periodTitles[activePeriod];
   const isCumulative = activePeriod === "累積餘額";
   const filteredTransactions = filterTransactionsByPeriod(
-    transactions,
+    sourceTransactions,
     activePeriod,
   );
-  const activeSummary = calculateSummary(filteredTransactions);
-  const recentTransactions = [...filteredTransactions].sort((a, b) =>
-    b.date.localeCompare(a.date),
+  const activeSummary = calculateSummary(
+    filteredTransactions,
+    sourceRecurringRules,
   );
+  const recentTransactions = [...filteredTransactions].sort((a, b) =>
+    (b.createdAt || b.date).localeCompare(a.createdAt || a.date),
+  ).slice(0, 5);
 
-  const expenseCategories = categories
+  const expenseCategories = sourceCategories
     .filter((category) => category.type === "expense")
     .map((category) => ({
       ...category,
@@ -409,9 +585,9 @@ export default function Home() {
               </div>
 
               <div className="grid w-full gap-3">
-                {expenseCategories.map((item) => (
+                {expenseCategories.map((item, index) => (
                   <div
-                    key={item.name}
+                    key={`${item.id || item.name}-${index}`}
                     className="flex items-center justify-between gap-3"
                   >
                     <div className="flex min-w-0 items-center gap-3">
@@ -516,14 +692,14 @@ export default function Home() {
               href="/recurring"
               className="rounded-full bg-violet-50 px-3 py-1 text-sm font-medium text-violet-700 transition hover:bg-violet-100"
             >
-              管理 {recurringRules.filter((item) => item.enabled).length} 項
+              管理 {sourceRecurringRules.filter((item) => item.enabled).length} 項
             </Link>
           </div>
 
           <div className="mt-5 grid gap-3 sm:grid-cols-2">
-            {recurringRules.map((rule, index) => (
+            {sourceRecurringRules.map((rule) => (
               <article
-                key={rule.name}
+                key={rule.id}
                 className="flex items-center justify-between gap-4 rounded-[24px] bg-slate-50/80 p-4"
               >
                 <div className="min-w-0">
@@ -540,7 +716,7 @@ export default function Home() {
                   <p className="mt-1 text-xs font-medium text-slate-400">
                     {rule.category} ·{" "}
                     {rule.frequency === "monthly" ? "每月" : rule.frequency} ·
-                    下次 2026/06/{String(index + 1).padStart(2, "0")}
+                    {rule.nextRunDate ? `下次 ${rule.nextRunDate}` : "尚未設定下次日期"}
                   </p>
                 </div>
                 <p className="shrink-0 text-sm font-semibold text-slate-950">
@@ -559,7 +735,7 @@ export default function Home() {
             { label: "分類", href: "/categories", icon: CategoriesIcon, active: false },
             { label: "記帳", href: "/add", icon: CardIcon, active: false },
             { label: "固定支出", href: "/recurring", icon: RepeatIcon, active: false },
-            { label: "分析", href: "#", icon: ChartIcon, active: false },
+            { label: "分析", href: "/analytics", icon: ChartIcon, active: false },
           ].map((item) => {
             const Icon = item.icon;
 

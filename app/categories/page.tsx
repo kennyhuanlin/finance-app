@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import {
   type Category,
@@ -143,8 +143,14 @@ function CategoriesIcon() {
 }
 
 export default function CategoriesPage() {
-  const { categories, addCategory, updateCategory, deleteCategory } =
-    useCategories();
+  const {
+    categories,
+    addCategory,
+    updateCategory,
+    deleteCategory,
+    refreshCategories,
+    isLoadingCategories,
+  } = useCategories();
   const [editingCategory, setEditingCategory] = useState<CategoryForm | null>(
     null,
   );
@@ -159,6 +165,10 @@ export default function CategoriesPage() {
   const visibleCategories =
     activeTab === "expense" ? expenseCategories : incomeCategories;
 
+  useEffect(() => {
+    refreshCategories();
+  }, [refreshCategories]);
+
   function openCreateForm() {
     setMessage("");
     setEditingCategory(emptyForm);
@@ -169,7 +179,7 @@ export default function CategoriesPage() {
     setEditingCategory(category);
   }
 
-  function saveCategory(event: React.FormEvent<HTMLFormElement>) {
+  async function saveCategory(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
     if (!editingCategory || !editingCategory.name.trim()) {
@@ -184,9 +194,17 @@ export default function CategoriesPage() {
     if (editingCategory.id) {
       updateCategory(nextCategory as Category);
     } else {
-      addCategory(nextCategory);
+      try {
+        await addCategory(nextCategory);
+      } catch (error) {
+        setMessage(
+          error instanceof Error ? error.message : "此分類已存在",
+        );
+        return;
+      }
     }
 
+    setMessage("");
     setEditingCategory(null);
   }
 
@@ -239,6 +257,12 @@ export default function CategoriesPage() {
           </p>
         ) : null}
 
+        {isLoadingCategories ? (
+          <p className="rounded-[22px] bg-slate-50 px-4 py-3 text-sm font-medium text-slate-400">
+            正在讀取 Google Sheets 分類...
+          </p>
+        ) : null}
+
         <div className="grid grid-cols-2 rounded-full border border-white/70 bg-white/75 p-1 shadow-sm shadow-slate-200/80 backdrop-blur-xl">
           {[
             { label: "支出", value: "expense" as CategoryType },
@@ -286,8 +310,7 @@ export default function CategoriesPage() {
               >
                 <div className="flex min-w-0 items-center gap-3">
                   <span
-                    className="grid h-12 w-12 shrink-0 place-items-center rounded-2xl text-xl"
-                    style={{ backgroundColor: `${category.color}22` }}
+                    className="grid h-12 w-12 shrink-0 place-items-center rounded-2xl bg-white text-xl shadow-sm shadow-slate-200"
                   >
                     {category.emoji}
                   </span>
@@ -299,10 +322,6 @@ export default function CategoriesPage() {
                       <span className="text-xs font-medium text-slate-400">
                         {category.type === "income" ? "收入" : "支出"}
                       </span>
-                      <span
-                        className="h-3 w-3 rounded-full"
-                        style={{ backgroundColor: category.color }}
-                      />
                     </div>
                   </div>
                 </div>
@@ -360,7 +379,7 @@ export default function CategoriesPage() {
             </span>
             固定支出
           </Link>
-          <Link href="#" className="flex flex-col items-center gap-1 text-slate-400">
+          <Link href="/analytics" className="flex flex-col items-center gap-1 text-slate-400">
             <span className="grid h-9 w-12 place-items-center rounded-full">
               <ChartIcon />
             </span>

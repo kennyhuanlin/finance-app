@@ -1,13 +1,17 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useCategories } from "../categories-context";
-import { transactions } from "../data";
+import { formatCategoryLabel } from "../lib/categories";
+import { createTransaction, getTransactions } from "../lib/googleSheets";
 
 type EntryType = "收入" | "支出";
 
 type Entry = {
+  id: string;
+  createdAt?: string;
   date: string;
   type: EntryType;
   category: string;
@@ -15,7 +19,6 @@ type Entry = {
   note: string;
 };
 
-const incomeCategories = ["薪資", "收入-補助", "投資收入", "其他收入"];
 const calculatorKeys = ["1", "2", "3", "4", "5", "6", "7", "8", "9", ".", "0"];
 
 function formatMoney(value: number) {
@@ -45,6 +48,30 @@ function today() {
   return new Date().toISOString().slice(0, 10);
 }
 
+function normalizeEntry(transaction: Record<string, unknown>, index: number): Entry {
+  return {
+    id: String(transaction.id ?? `sheet-tx-${index}`),
+    createdAt:
+      transaction.createdAt === undefined
+        ? undefined
+        : String(transaction.createdAt),
+    date: String(transaction.date ?? ""),
+    type:
+      transaction.type === "收入" || transaction.type === "income"
+        ? "收入"
+        : "支出",
+    category: String(transaction.category ?? ""),
+    amount: Number(transaction.amount ?? 0),
+    note: String(transaction.note ?? ""),
+  };
+}
+
+function sortEntriesByCreatedAt(entries: Entry[]) {
+  return [...entries].sort((a, b) =>
+    (b.createdAt || b.date).localeCompare(a.createdAt || a.date),
+  );
+}
+
 function BackIcon() {
   return (
     <svg
@@ -61,67 +88,104 @@ function BackIcon() {
 }
 
 export default function AddRecordPage() {
+  const router = useRouter();
   const { categories } = useCategories();
   const expenseCategories = categories.filter((item) => item.type === "expense");
-  const incomeCategoryOptions = categories
-    .filter((item) => item.type === "income")
-    .map((item) => item.name);
+  const incomeCategories = categories.filter((item) => item.type === "income");
   const [entryType, setEntryType] = useState<EntryType>("支出");
   const [date, setDate] = useState(today);
-  const [category, setCategory] = useState(expenseCategories[0]?.name ?? "其他");
+  const [category, setCategory] = useState("");
+  const [necessity, setNecessity] = useState<"必要" | "非必要">("必要");
   const [amount, setAmount] = useState("");
   const [note, setNote] = useState("");
-  const [entries, setEntries] = useState<Entry[]>(
-    transactions.map((item) => ({
-      date: item.date,
-      type: item.type as EntryType,
-      category: item.category,
-      amount: item.amount,
-      note: item.note,
-    })),
-  );
+  const [statusMessage, setStatusMessage] = useState("");
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [entries, setEntries] = useState<Entry[]>([]);
+
+  async function fetchRecentEntries() {
+    const sheetTransactions = await getTransactions<Record<string, unknown>>();
+
+    setEntries(
+      sortEntriesByCreatedAt(
+        sheetTransactions.map((transaction, index) =>
+          normalizeEntry(transaction, index),
+        ),
+      ).slice(0, 5),
+    );
+  }
+
+  useEffect(() => {
+    fetchRecentEntries().catch(() => {
+      setEntries([]);
+    });
+  }, []);
 
   const categoryOptions = useMemo(
-    () =>
-      entryType === "收入"
-        ? incomeCategoryOptions.length > 0
-          ? incomeCategoryOptions
-          : incomeCategories
-        : expenseCategories.map((item) => item.name),
-    [entryType, expenseCategories, incomeCategoryOptions],
+    () => (entryType === "收入" ? incomeCategories : expenseCategories),
+    [entryType, expenseCategories, incomeCategories],
   );
 
-  const recentEntries = entries.slice(0, 4);
+  const recentEntries = entries.slice(0, 5);
   const canSubmit = Number(amount) > 0 && category.trim().length > 0;
+
+  useEffect(() => {
+    if (
+      categoryOptions.length > 0 &&
+      !categoryOptions.some((item) => item.name === category)
+    ) {
+      setCategory(categoryOptions[0].name);
+    }
+  }, [category, categoryOptions]);
 
   function handleTypeChange(type: EntryType) {
     setEntryType(type);
     setCategory(
       type === "收入"
-        ? incomeCategoryOptions[0] ?? incomeCategories[0]
-        : expenseCategories[0]?.name ?? "其他",
+        ? incomeCategories[0]?.name ?? ""
+        : expenseCategories[0]?.name ?? "",
     );
+    if (type === "支出") {
+      setNecessity("必要");
+    }
   }
 
-  function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
+  async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
-    if (!canSubmit) {
+    if (!canSubmit || isSubmitting) {
       return;
     }
 
-    setEntries((current) => [
-      {
-        date,
-        type: entryType,
-        category,
-        amount: Number(amount),
-        note: note.trim() || category,
-      },
-      ...current,
-    ]);
-    setAmount("");
-    setNote("");
+    const isExpense = entryType === "支出";
+    const nextEntry = {
+      id: `tx-${Date.now()}`,
+      createdAt: new Date().toISOString(),
+      date,
+      type: entryType,
+      expenseType: "",
+      necessity: isExpense ? necessity : "",
+      category,
+      amount: Number(amount),
+      note: note.trim() || category,
+      sourceType: "manual",
+      recurringId: "",
+    };
+
+    setIsSubmitting(true);
+    setStatusMessage("");
+
+    try {
+      await createTransaction(nextEntry);
+      await fetchRecentEntries();
+      setAmount("");
+      setNote("");
+      setStatusMessage("新增成功");
+      router.push("/");
+    } catch {
+      setStatusMessage("新增失敗，請稍後再試");
+    } finally {
+      setIsSubmitting(false);
+    }
   }
 
   function handleCalculatorTap(key: string) {
@@ -169,6 +233,18 @@ export default function AddRecordPage() {
         </header>
 
         <form id="add-record-form" onSubmit={handleSubmit} className="grid gap-4">
+          {statusMessage ? (
+            <p
+              className={`rounded-[22px] px-4 py-3 text-sm font-medium ${
+                statusMessage === "新增成功"
+                  ? "bg-emerald-50 text-emerald-600"
+                  : "bg-rose-50 text-rose-600"
+              }`}
+            >
+              {statusMessage}
+            </p>
+          ) : null}
+
           <section className="rounded-[32px] border border-white/75 bg-white/80 p-5 shadow-sm shadow-slate-200/80 backdrop-blur-xl">
             <div className="grid grid-cols-2 rounded-full bg-slate-100 p-1">
               {(["支出", "收入"] as const).map((type) => (
@@ -220,13 +296,37 @@ export default function AddRecordPage() {
                 onChange={(event) => setCategory(event.target.value)}
                 className="h-13 rounded-[22px] border border-transparent bg-slate-50 px-4 text-base font-medium text-slate-950 outline-none transition focus:border-slate-200 focus:bg-white"
               >
-                {categoryOptions.map((item) => (
-                  <option key={item} value={item}>
-                    {item}
+                {categoryOptions.map((item, index) => (
+                  <option key={`${item.id}-${index}`} value={item.name}>
+                    {formatCategoryLabel(item)}
                   </option>
                 ))}
               </select>
             </label>
+
+            {entryType === "支出" ? (
+              <div className="grid gap-2">
+                <span className="text-sm font-medium text-slate-500">
+                  必要性
+                </span>
+                <div className="grid grid-cols-2 rounded-full bg-slate-100 p-1">
+                  {(["必要", "非必要"] as const).map((item, index) => (
+                    <button
+                      key={`${item}-${index}`}
+                      type="button"
+                      onClick={() => setNecessity(item)}
+                      className={`h-11 rounded-full text-sm font-semibold transition ${
+                        necessity === item
+                          ? "bg-slate-950 text-white shadow-lg shadow-slate-200"
+                          : "text-slate-500"
+                      }`}
+                    >
+                      {item}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ) : null}
 
             <label className="grid gap-2">
               <span className="text-sm font-medium text-slate-500">備註</span>
@@ -243,7 +343,6 @@ export default function AddRecordPage() {
         <section className="rounded-[32px] border border-white/75 bg-white/80 p-5 shadow-sm shadow-slate-200/80 backdrop-blur-xl">
           <div className="flex items-center justify-between gap-4">
             <div>
-              <p className="text-sm font-medium text-slate-500">暫存紀錄</p>
               <h2 className="mt-1 text-xl font-semibold tracking-normal">
                 最近新增
               </h2>
@@ -310,10 +409,10 @@ export default function AddRecordPage() {
           <button
             type="submit"
             form="add-record-form"
-            disabled={!canSubmit}
+            disabled={!canSubmit || isSubmitting}
             className="flex h-14 w-full items-center justify-center rounded-full bg-slate-950 text-base font-semibold text-white shadow-lg shadow-slate-300/80 transition active:scale-[0.99] disabled:bg-slate-300 disabled:shadow-none"
           >
-            新增紀錄
+            {isSubmitting ? "新增中..." : "新增紀錄"}
           </button>
         </div>
       </div>
