@@ -184,23 +184,22 @@ function isEnabled(value: unknown) {
   return value === true || String(value).toLowerCase() === "true";
 }
 
-function isRecurringExpense(rule: RecurringRule) {
-  return rule.type === "支出" || rule.type === "expense";
+function isRecurringExpenseTransaction(transaction: Transaction) {
+  return (
+    isExpenseTransaction(transaction) && transaction.sourceType === "recurring"
+  );
 }
 
-function calculateSummary(
-  sourceTransactions: Transaction[],
-  sourceRecurringRules: RecurringRule[],
-) {
+function calculateSummary(sourceTransactions: Transaction[]) {
   const income = sourceTransactions
     .filter(isIncomeTransaction)
-    .reduce((sum, transaction) => sum + transaction.amount, 0);
+    .reduce((sum, transaction) => sum + Number(transaction.amount), 0);
   const expense = sourceTransactions
     .filter(isExpenseTransaction)
-    .reduce((sum, transaction) => sum + transaction.amount, 0);
-  const fixedExpense = sourceRecurringRules
-    .filter((rule) => rule.enabled && isRecurringExpense(rule))
-    .reduce((sum, rule) => sum + Number(rule.amount), 0);
+    .reduce((sum, transaction) => sum + Number(transaction.amount), 0);
+  const fixedExpense = sourceTransactions
+    .filter(isRecurringExpenseTransaction)
+    .reduce((sum, transaction) => sum + Number(transaction.amount), 0);
 
   return {
     income,
@@ -444,10 +443,7 @@ export default function Home() {
     sourceTransactions,
     activePeriod,
   );
-  const activeSummary = calculateSummary(
-    filteredTransactions,
-    sourceRecurringRules,
-  );
+  const activeSummary = calculateSummary(filteredTransactions);
   const recentTransactions = [...filteredTransactions].sort((a, b) =>
     (b.createdAt || b.date).localeCompare(a.createdAt || a.date),
   ).slice(0, 5);
