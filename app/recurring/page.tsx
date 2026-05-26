@@ -55,6 +55,14 @@ const emptyForm: RuleForm = {
   manualNextRunDate: false,
 };
 
+function isExpenseRule(rule: { type: string }) {
+  return rule.type === "支出" || rule.type === "expense";
+}
+
+function isIncomeRule(rule: { type: string }) {
+  return rule.type === "收入" || rule.type === "income";
+}
+
 function formatMoney(value: number) {
   return new Intl.NumberFormat("zh-TW", {
     style: "currency",
@@ -276,7 +284,9 @@ function CategoriesIcon() {
 export default function RecurringPage() {
   const { categories } = useCategories();
   const expenseCategories = categories.filter((item) => item.type === "expense");
+  const incomeCategories = categories.filter((item) => item.type === "income");
   const [rules, setRules] = useState<RecurringRule[]>([]);
+  const [activeTab, setActiveTab] = useState<"expense" | "income">("expense");
   const [editingRule, setEditingRule] = useState<RuleForm | null>(null);
   const [amountKeyboardOpen, setAmountKeyboardOpen] = useState(false);
   const [statusMessage, setStatusMessage] = useState("");
@@ -312,13 +322,22 @@ export default function RecurringPage() {
     };
   }, []);
 
-  const enabledCount = rules.filter((rule) => rule.status === "active").length;
+  const visibleRules = rules.filter((rule) =>
+    activeTab === "expense" ? isExpenseRule(rule) : isIncomeRule(rule),
+  );
+  const visibleCategoryOptions =
+    editingRule?.type === "收入" || editingRule?.type === "income"
+      ? incomeCategories
+      : expenseCategories;
+  const enabledCount = visibleRules.filter(
+    (rule) => rule.status === "active",
+  ).length;
   const monthlyTotal = useMemo(
     () =>
-      rules
+      visibleRules
         .filter((rule) => rule.status === "active")
         .reduce((sum, rule) => sum + rule.amount, 0),
-    [rules],
+    [visibleRules],
   );
 
   function toggleRule(id: string) {
@@ -346,10 +365,17 @@ export default function RecurringPage() {
 
   function openCreateForm() {
     const startDate = todayString();
+    const type = activeTab === "income" ? "收入" : "支出";
+    const categoryOptions =
+      activeTab === "income" ? incomeCategories : expenseCategories;
 
     setEditingRule({
       ...emptyForm,
-      category: expenseCategories[0]?.name ?? "其他",
+      type,
+      nature: type === "收入" ? "" : "固定扣款",
+      necessity: type === "收入" ? "" : "必要",
+      expenseType: type === "收入" ? "" : "固定",
+      category: categoryOptions[0]?.name ?? "",
       startDate,
       nextRunDate: addPeriod(startDate, emptyForm.frequency),
       manualNextRunDate: false,
@@ -376,6 +402,27 @@ export default function RecurringPage() {
       }
 
       const next = { ...current, [key]: value };
+
+      if (key === "type") {
+        const nextType = String(value);
+        const categoryOptions =
+          nextType === "收入" || nextType === "income"
+            ? incomeCategories
+            : expenseCategories;
+
+        next.category = categoryOptions[0]?.name ?? "";
+        next.categoryId = categoryOptions[0]?.id;
+        next.nature = nextType === "收入" || nextType === "income" ? "" : "固定扣款";
+        next.necessity = nextType === "收入" || nextType === "income" ? "" : "必要";
+        next.expenseType = nextType === "收入" || nextType === "income" ? "" : "固定";
+      }
+
+      if (key === "category") {
+        const nextCategory = String(value);
+        next.categoryId = categories.find(
+          (category) => category.name === nextCategory,
+        )?.id;
+      }
 
       if (
         (key === "startDate" || key === "frequency") &&
@@ -460,6 +507,7 @@ export default function RecurringPage() {
     if (
       !editingRule ||
       !editingRule.name.trim() ||
+      !editingRule.category.trim() ||
       Number(editingRule.amount) <= 0 ||
       isSaving
     ) {
@@ -467,19 +515,20 @@ export default function RecurringPage() {
     }
 
     const id = editingRule.id ?? `recurring-${Date.now()}`;
+    const isIncome = isIncomeRule(editingRule);
     const nextRule: RecurringRule = {
       id,
       name: editingRule.name.trim(),
       type: editingRule.type,
-      nature: editingRule.nature,
-      necessity: editingRule.necessity,
+      nature: isIncome ? "" : editingRule.nature,
+      necessity: isIncome ? "" : editingRule.necessity,
       category: editingRule.category,
       categoryId:
         categories.find((category) => category.name === editingRule.category)
           ?.id ?? editingRule.categoryId,
       amount: Number(editingRule.amount),
       frequency: editingRule.frequency,
-      expenseType: "固定",
+      expenseType: isIncome ? "" : "固定",
       note: editingRule.note,
       lastRunDate: editingRule.lastRunDate,
       startDate: editingRule.startDate,
@@ -500,9 +549,12 @@ export default function RecurringPage() {
           type: nextRule.type,
           expenseType: nextRule.expenseType,
           necessity: nextRule.necessity,
+          nature: nextRule.nature,
           category: nextRule.category,
+          categoryId: nextRule.categoryId ?? "",
           amount: nextRule.amount,
           frequency: nextRule.frequency,
+          startDate: nextRule.startDate,
           nextRunDate: nextRule.nextRunDate,
           enabled: nextRule.enabled,
           note: nextRule.note,
@@ -549,7 +601,9 @@ export default function RecurringPage() {
           </Link>
           <div className="text-center">
             <p className="text-sm font-medium text-slate-500">自動扣款</p>
-            <h1 className="text-2xl font-semibold tracking-normal">固定支出</h1>
+            <h1 className="text-2xl font-semibold tracking-normal">
+              {activeTab === "expense" ? "固定支出" : "固定收入"}
+            </h1>
           </div>
           <button
             type="button"
@@ -567,17 +621,43 @@ export default function RecurringPage() {
           </p>
         ) : null}
 
+        <div className="grid grid-cols-2 rounded-full border border-white/70 bg-white/75 p-1 shadow-sm shadow-slate-200/80 backdrop-blur-xl">
+          {[
+            { label: "固定支出", value: "expense" as const },
+            { label: "固定收入", value: "income" as const },
+          ].map((tab) => (
+            <button
+              key={tab.value}
+              type="button"
+              onClick={() => setActiveTab(tab.value)}
+              className={`h-11 rounded-full text-sm font-semibold transition ${
+                activeTab === tab.value
+                  ? "bg-slate-950 text-white shadow-lg shadow-slate-300/80"
+                  : "text-slate-500 hover:bg-white hover:text-slate-900"
+              }`}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </div>
+
         <section className="grid grid-cols-2 gap-3">
           <article className="rounded-[28px] border border-white/75 bg-white/80 p-4 shadow-sm shadow-slate-200/80 backdrop-blur-xl">
-            <p className="text-sm font-medium text-slate-500">每月固定支出</p>
-            <p className="mt-2 text-xl font-semibold text-slate-950">
+            <p className="text-sm font-medium text-slate-500">
+              {activeTab === "expense" ? "每月固定支出" : "每月固定收入"}
+            </p>
+            <p
+              className={`mt-2 text-xl font-semibold ${
+                activeTab === "expense" ? "text-rose-600" : "text-emerald-600"
+              }`}
+            >
               {formatMoney(monthlyTotal)}
             </p>
           </article>
           <article className="rounded-[28px] border border-white/75 bg-white/80 p-4 shadow-sm shadow-slate-200/80 backdrop-blur-xl">
             <p className="text-sm font-medium text-slate-500">啟用規則</p>
             <p className="mt-2 text-xl font-semibold text-violet-700">
-              {enabledCount} / {rules.length}
+              {enabledCount} / {visibleRules.length}
             </p>
           </article>
         </section>
@@ -585,9 +665,11 @@ export default function RecurringPage() {
         <section className="rounded-[32px] border border-white/75 bg-white/80 p-5 shadow-sm shadow-slate-200/80 backdrop-blur-xl">
           <div className="flex items-center justify-between gap-4">
             <div>
-              <p className="text-sm font-medium text-slate-500">固定支出清單</p>
+              <p className="text-sm font-medium text-slate-500">
+                {activeTab === "expense" ? "固定支出清單" : "固定收入清單"}
+              </p>
               <h2 className="mt-1 text-xl font-semibold tracking-normal">
-                {isLoading ? "讀取中" : `${rules.length} 筆規則`}
+                {isLoading ? "讀取中" : `${visibleRules.length} 筆規則`}
               </h2>
             </div>
             <button
@@ -595,7 +677,7 @@ export default function RecurringPage() {
               onClick={openCreateForm}
               className="rounded-full bg-slate-950 px-4 py-2 text-sm font-medium text-white shadow-lg shadow-slate-300/80 transition active:scale-[0.98]"
             >
-              新增固定支出
+              新增{activeTab === "expense" ? "固定支出" : "固定收入"}
             </button>
           </div>
 
@@ -606,16 +688,17 @@ export default function RecurringPage() {
               </p>
             ) : null}
 
-            {!isLoading && rules.length === 0 ? (
+            {!isLoading && visibleRules.length === 0 ? (
               <p className="rounded-[24px] bg-slate-50/80 p-4 text-sm font-medium text-slate-400">
-                尚未建立固定支出
+                尚未建立{activeTab === "expense" ? "固定支出" : "固定收入"}
               </p>
             ) : null}
 
-            {rules.map((rule) => {
+            {visibleRules.map((rule) => {
               const categoryName =
                 categories.find((category) => category.id === rule.categoryId)
                   ?.name ?? rule.category;
+              const ruleIsIncome = isIncomeRule(rule);
 
               return (
               <article
@@ -639,14 +722,20 @@ export default function RecurringPage() {
                       </span>
                     </div>
                     <p className="mt-1 text-sm font-medium text-slate-400">
-                      {categoryName} · {rule.nature} · {rule.necessity}
+                      {ruleIsIncome
+                        ? categoryName
+                        : `${categoryName} · ${rule.nature} · ${rule.necessity}`}
                     </p>
                     <p className="mt-1 text-xs font-medium text-slate-400">
                       開始 {formatDate(rule.startDate)}
                     </p>
                   </div>
                   <div className="shrink-0 text-right">
-                    <p className="text-base font-semibold text-slate-950">
+                    <p
+                      className={`text-base font-semibold ${
+                        ruleIsIncome ? "text-emerald-600" : "text-rose-600"
+                      }`}
+                    >
                       {formatMoney(rule.amount)}
                     </p>
                     <p className="mt-1 text-xs font-medium text-slate-400">
@@ -756,10 +845,12 @@ export default function RecurringPage() {
             <div className="mb-5 flex items-center justify-between gap-4">
               <div>
                 <p className="text-sm font-medium text-slate-500">
-                  固定支出規則
+                  {isIncomeRule(editingRule) ? "固定收入規則" : "固定支出規則"}
                 </p>
                 <h2 className="mt-1 text-2xl font-semibold tracking-normal">
-                  {editingRule.id ? "編輯固定支出" : "新增固定支出"}
+                  {editingRule.id
+                    ? `編輯${isIncomeRule(editingRule) ? "固定收入" : "固定支出"}`
+                    : `新增${isIncomeRule(editingRule) ? "固定收入" : "固定支出"}`}
                 </h2>
               </div>
               <button
@@ -815,7 +906,7 @@ export default function RecurringPage() {
                     }
                     className="h-12 rounded-[20px] bg-slate-50 px-4 text-base font-medium outline-none focus:bg-white focus:ring-2 focus:ring-slate-200"
                   >
-                    {expenseCategories.map(
+                    {visibleCategoryOptions.map(
                       (item, index) => (
                         <option key={`${item.id}-${index}`} value={item.name}>
                           {formatCategoryLabel(item)}
@@ -826,45 +917,47 @@ export default function RecurringPage() {
                 </label>
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
-                <label className="grid gap-2">
-                  <span className="text-sm font-medium text-slate-500">
-                    支出性質
-                  </span>
-                  <select
-                    value={editingRule.nature}
-                    onChange={(event) =>
-                      updateEditingRule("nature", event.target.value)
-                    }
-                    className="h-12 rounded-[20px] bg-slate-50 px-4 text-base font-medium outline-none focus:bg-white focus:ring-2 focus:ring-slate-200"
-                  >
-                    {natureOptions.map((item, index) => (
-                      <option key={`${item}-${index}`} value={item}>
-                        {item}
-                      </option>
-                    ))}
-                  </select>
-                </label>
+              {isExpenseRule(editingRule) ? (
+                <div className="grid grid-cols-2 gap-3">
+                  <label className="grid gap-2">
+                    <span className="text-sm font-medium text-slate-500">
+                      支出性質
+                    </span>
+                    <select
+                      value={editingRule.nature}
+                      onChange={(event) =>
+                        updateEditingRule("nature", event.target.value)
+                      }
+                      className="h-12 rounded-[20px] bg-slate-50 px-4 text-base font-medium outline-none focus:bg-white focus:ring-2 focus:ring-slate-200"
+                    >
+                      {natureOptions.map((item, index) => (
+                        <option key={`${item}-${index}`} value={item}>
+                          {item}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
 
-                <label className="grid gap-2">
-                  <span className="text-sm font-medium text-slate-500">
-                    必要性
-                  </span>
-                  <select
-                    value={editingRule.necessity}
-                    onChange={(event) =>
-                      updateEditingRule("necessity", event.target.value)
-                    }
-                    className="h-12 rounded-[20px] bg-slate-50 px-4 text-base font-medium outline-none focus:bg-white focus:ring-2 focus:ring-slate-200"
-                  >
-                    {necessityOptions.map((item, index) => (
-                      <option key={`${item}-${index}`} value={item}>
-                        {item}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              </div>
+                  <label className="grid gap-2">
+                    <span className="text-sm font-medium text-slate-500">
+                      必要性
+                    </span>
+                    <select
+                      value={editingRule.necessity}
+                      onChange={(event) =>
+                        updateEditingRule("necessity", event.target.value)
+                      }
+                      className="h-12 rounded-[20px] bg-slate-50 px-4 text-base font-medium outline-none focus:bg-white focus:ring-2 focus:ring-slate-200"
+                    >
+                      {necessityOptions.map((item, index) => (
+                        <option key={`${item}-${index}`} value={item}>
+                          {item}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                </div>
+              ) : null}
 
               <div className="grid gap-3">
                 <div className="grid gap-2">
