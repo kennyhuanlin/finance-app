@@ -31,8 +31,7 @@ type TransactionForm = Omit<Transaction, "amount"> & {
 };
 
 const typeOptions = ["支出", "收入"];
-const natureOptions = ["日常支出", "固定支出", "家庭支出", "一次性支出", "收入"];
-const necessityOptions = ["必要", "重要", "可調整", "可取消"];
+const necessityOptions = ["必要", "非必要"];
 const calculatorKeys = ["1", "2", "3", "4", "5", "6", "7", "8", "9", ".", "0"];
 
 function formatMoney(value: number) {
@@ -114,7 +113,7 @@ function normalizeTransaction(
       (sourceType === "recurring"
         ? "必要"
         : type === "收入" || type === "income"
-          ? "重要"
+          ? ""
           : "必要"),
     createdAt:
       transaction.createdAt === undefined
@@ -152,6 +151,7 @@ export default function TransactionsPage() {
   const [editingTransaction, setEditingTransaction] =
     useState<TransactionForm | null>(null);
   const [amountKeyboardOpen, setAmountKeyboardOpen] = useState(false);
+  const [message, setMessage] = useState("");
 
   async function fetchTransactions() {
     const sheetTransactions = await getTransactions<Record<string, unknown>>();
@@ -193,11 +193,16 @@ export default function TransactionsPage() {
 
   function openEditForm(transaction: Transaction) {
     if (transaction.sourceType === "recurring") {
+      setMessage("固定支出產生的交易請到固定收支管理頁調整");
       return;
     }
 
+    setMessage("");
     setEditingTransaction({
       ...transaction,
+      necessity: isExpenseTransaction(transaction)
+        ? transaction.necessity || "必要"
+        : "",
       amount: String(transaction.amount),
     });
     setAmountKeyboardOpen(true);
@@ -228,7 +233,9 @@ export default function TransactionsPage() {
               ? incomeCategories.find((item) => item.name === nextCategory)?.id
               : expenseCategories.find((item) => item.name === nextCategory)
                   ?.id,
-          nature: nextType === "收入" ? "收入" : "日常支出",
+          nature: "",
+          expenseType: "",
+          necessity: nextType === "收入" ? "" : "必要",
         };
       }
 
@@ -297,10 +304,16 @@ export default function TransactionsPage() {
       return;
     }
 
+    const isExpense =
+      editingTransaction.type === "支出" ||
+      editingTransaction.type === "expense";
     const nextTransaction: Transaction = {
       ...editingTransaction,
       note: editingTransaction.note.trim(),
       amount: Number(editingTransaction.amount),
+      expenseType: "",
+      nature: "",
+      necessity: isExpense ? editingTransaction.necessity || "必要" : "",
     };
 
     await updateTransaction(nextTransaction.id, {
@@ -308,8 +321,8 @@ export default function TransactionsPage() {
       createdAt: nextTransaction.createdAt ?? "",
       date: nextTransaction.date,
       type: nextTransaction.type,
-      expenseType: nextTransaction.expenseType ?? "",
-      nature: nextTransaction.nature,
+      expenseType: "",
+      nature: "",
       necessity: nextTransaction.necessity,
       category: nextTransaction.category,
       categoryId: nextTransaction.categoryId ?? "",
@@ -357,6 +370,12 @@ export default function TransactionsPage() {
           </div>
           <div className="h-11 w-11" />
         </header>
+
+        {message ? (
+          <p className="rounded-[22px] bg-violet-50 px-4 py-3 text-sm font-medium text-violet-700">
+            {message}
+          </p>
+        ) : null}
 
         <section className="grid grid-cols-2 gap-3">
           <article className="rounded-[28px] border border-white/75 bg-white/80 p-4 shadow-sm shadow-slate-200/80 backdrop-blur-xl">
@@ -438,22 +457,17 @@ export default function TransactionsPage() {
                   </div>
 
                   <div className="mt-3 flex justify-end gap-2">
-                    {isRecurring ? (
-                      <Link
-                        href="/recurring"
-                        className="rounded-full bg-violet-50 px-3 py-1.5 text-sm font-medium text-violet-700 transition active:scale-[0.98]"
-                      >
-                        管理規則
-                      </Link>
-                    ) : (
-                      <button
-                        type="button"
-                        onClick={() => openEditForm(item)}
-                        className="rounded-full bg-white px-3 py-1.5 text-sm font-medium text-slate-700 shadow-sm shadow-slate-200 transition active:scale-[0.98]"
-                      >
-                        編輯
-                      </button>
-                    )}
+                    <button
+                      type="button"
+                      onClick={() => openEditForm(item)}
+                      className={`rounded-full px-3 py-1.5 text-sm font-medium transition active:scale-[0.98] ${
+                        isRecurring
+                          ? "bg-violet-50 text-violet-700"
+                          : "bg-white text-slate-700 shadow-sm shadow-slate-200"
+                      }`}
+                    >
+                      {isRecurring ? "管理規則" : "編輯"}
+                    </button>
                     <button
                       type="button"
                       onClick={() => deleteTransaction(item)}
@@ -527,26 +541,8 @@ export default function TransactionsPage() {
                 </label>
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
-                <label className="grid gap-2">
-                  <span className="text-sm font-medium text-slate-500">
-                    支出性質
-                  </span>
-                  <select
-                    value={editingTransaction.nature}
-                    onChange={(event) =>
-                      updateEditingTransaction("nature", event.target.value)
-                    }
-                    className="h-12 rounded-[20px] bg-slate-50 px-4 text-base font-medium outline-none focus:bg-white focus:ring-2 focus:ring-slate-200"
-                  >
-                    {natureOptions.map((item, index) => (
-                      <option key={`${item}-${index}`} value={item}>
-                        {item}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-
+              {editingTransaction.type === "支出" ||
+              editingTransaction.type === "expense" ? (
                 <label className="grid gap-2">
                   <span className="text-sm font-medium text-slate-500">
                     必要性
@@ -565,7 +561,7 @@ export default function TransactionsPage() {
                     ))}
                   </select>
                 </label>
-              </div>
+              ) : null}
 
               <label className="grid gap-2">
                 <span className="text-sm font-medium text-slate-500">分類</span>
