@@ -616,11 +616,11 @@ export default function AnalyticsPage() {
   const kpis = [
     { label: "收入", value: formatMoney(summary.income), tone: "text-emerald-600" },
     { label: "支出", value: formatMoney(summary.expense), tone: "text-rose-600" },
-    { label: "結餘", value: formatMoney(summary.balance), tone: "text-slate-950" },
-    { label: "固定支出", value: formatMoney(summary.fixedExpense), tone: "text-violet-700" },
+    { label: "固定支出", value: formatMoney(summary.fixedExpense), tone: "text-rose-600" },
     { label: "非固定支出", value: formatMoney(summary.variableExpense), tone: "text-orange-600" },
-    { label: "必要支出", value: formatMoney(summary.necessaryExpense), tone: "text-sky-700" },
-    { label: "非必要支出", value: formatMoney(summary.nonNecessaryExpense), tone: "text-pink-600" },
+    { label: "必要支出", value: formatMoney(summary.necessaryExpense), tone: "text-orange-600" },
+    { label: "非必要支出", value: formatMoney(summary.nonNecessaryExpense), tone: "text-rose-600" },
+    { label: "結餘", value: formatMoney(summary.balance), tone: "text-emerald-600" },
     { label: "儲蓄率", value: formatPercent(summary.savingsRate), tone: "text-emerald-600" },
   ];
 
@@ -661,7 +661,7 @@ export default function AnalyticsPage() {
           ))}
         </div>
 
-        <section className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+        <section className="grid grid-cols-2 gap-3">
           {kpis.map((item) => (
             <article
               key={item.label}

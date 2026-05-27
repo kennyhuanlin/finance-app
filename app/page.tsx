@@ -743,52 +743,6 @@ export default function Home() {
           </article>
         </section>
 
-        <section className="rounded-[32px] border border-white/75 bg-white/80 p-5 shadow-sm shadow-slate-200/80 backdrop-blur-xl sm:p-6">
-          <div className="flex items-center justify-between gap-4">
-            <div>
-              <p className="text-sm font-medium text-slate-500">固定支出</p>
-              <h2 className="mt-1 text-xl font-semibold tracking-normal">
-                每月自動規則
-              </h2>
-            </div>
-            <Link
-              href="/recurring"
-              className="rounded-full bg-violet-50 px-3 py-1 text-sm font-medium text-violet-700 transition hover:bg-violet-100"
-            >
-              管理 {sourceRecurringRules.filter((item) => item.enabled).length} 項
-            </Link>
-          </div>
-
-          <div className="mt-5 grid gap-3 sm:grid-cols-2">
-            {sourceRecurringRules.map((rule) => (
-              <article
-                key={rule.id}
-                className="flex items-center justify-between gap-4 rounded-[24px] bg-slate-50/80 p-4"
-              >
-                <div className="min-w-0">
-                  <div className="flex items-center gap-2">
-                    <p className="truncate text-sm font-semibold text-slate-950">
-                      {rule.name}
-                    </p>
-                    <span
-                      className={`h-2 w-2 shrink-0 rounded-full ${
-                        rule.enabled ? "bg-emerald-400" : "bg-slate-300"
-                      }`}
-                    />
-                  </div>
-                  <p className="mt-1 text-xs font-medium text-slate-400">
-                    {rule.category} ·{" "}
-                    {rule.frequency === "monthly" ? "每月" : rule.frequency} ·
-                    {rule.nextRunDate ? `下次 ${rule.nextRunDate}` : "尚未設定下次日期"}
-                  </p>
-                </div>
-                <p className="shrink-0 text-sm font-semibold text-slate-950">
-                  {formatMoney(rule.amount)}
-                </p>
-              </article>
-            ))}
-          </div>
-        </section>
       </section>
 
       <nav className="fixed inset-x-0 bottom-0 z-20 border-t border-white/80 bg-white/85 px-5 pb-[max(0.9rem,env(safe-area-inset-bottom))] pt-3 shadow-[0_-12px_32px_rgba(15,23,42,0.08)] backdrop-blur-2xl sm:hidden">
