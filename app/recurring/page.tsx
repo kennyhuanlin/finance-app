@@ -4,7 +4,12 @@ import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useCategories } from "../categories-context";
 import { formatCategoryLabel } from "../lib/categories";
-import { createRecurringRule, getRecurringRules } from "../lib/googleSheets";
+import {
+  createRecurringRule,
+  deleteRecurringRule,
+  getRecurringRules,
+  updateRecurringRule,
+} from "../lib/googleSheets";
 
 type RecurringRule = {
   id: string;
@@ -19,6 +24,8 @@ type RecurringRule = {
   expenseType: string;
   note: string;
   lastRunDate: string;
+  endDate: string;
+  remainingCount: string;
   startDate: string;
   nextRunDate: string;
   status: "active" | "paused";
@@ -48,6 +55,8 @@ const emptyForm: RuleForm = {
   expenseType: "固定",
   note: "",
   lastRunDate: "",
+  endDate: "",
+  remainingCount: "",
   startDate: "2026-05-26",
   nextRunDate: "2026-06-01",
   status: "active",
@@ -99,6 +108,26 @@ function formatAmountDisplay(value: string) {
 
 function todayString() {
   return new Date().toISOString().slice(0, 10);
+}
+
+function normalizeRemainingCount(value: unknown) {
+  if (value === undefined || value === null || value === "") {
+    return "";
+  }
+
+  const count = Number(value);
+
+  return Number.isFinite(count) ? String(count) : "";
+}
+
+function isValidRemainingCount(value: string) {
+  if (value.trim().length === 0) {
+    return true;
+  }
+
+  const count = Number(value);
+
+  return Number.isInteger(count) && count >= 0;
 }
 
 function addPeriod(date: string, frequency: string) {
@@ -162,6 +191,8 @@ function normalizeRecurringRule(
     expenseType: String(rule.expenseType ?? "固定"),
     note: String(rule.note ?? ""),
     lastRunDate: String(rule.lastRunDate ?? ""),
+    endDate: String(rule.endDate ?? ""),
+    remainingCount: normalizeRemainingCount(rule.remainingCount),
     startDate,
     nextRunDate: String(rule.nextRunDate ?? addPeriod(startDate, frequency)),
     status: enabled ? "active" : "paused",
@@ -509,6 +540,7 @@ export default function RecurringPage() {
       !editingRule.name.trim() ||
       !editingRule.category.trim() ||
       Number(editingRule.amount) <= 0 ||
+      !isValidRemainingCount(editingRule.remainingCount) ||
       isSaving
     ) {
       return;
@@ -531,6 +563,8 @@ export default function RecurringPage() {
       expenseType: isIncome ? "" : "固定",
       note: editingRule.note,
       lastRunDate: editingRule.lastRunDate,
+      endDate: editingRule.endDate,
+      remainingCount: editingRule.remainingCount.trim(),
       startDate: editingRule.startDate,
       nextRunDate: editingRule.nextRunDate,
       status: editingRule.enabled ? "active" : "paused",
@@ -559,6 +593,28 @@ export default function RecurringPage() {
           enabled: nextRule.enabled,
           note: nextRule.note,
           lastRunDate: nextRule.lastRunDate,
+          endDate: nextRule.endDate,
+          remainingCount: nextRule.remainingCount,
+        });
+      } else {
+        await updateRecurringRule(nextRule.id, {
+          id: nextRule.id,
+          name: nextRule.name,
+          type: nextRule.type,
+          expenseType: nextRule.expenseType,
+          necessity: nextRule.necessity,
+          nature: nextRule.nature,
+          category: nextRule.category,
+          categoryId: nextRule.categoryId ?? "",
+          amount: nextRule.amount,
+          frequency: nextRule.frequency,
+          startDate: nextRule.startDate,
+          nextRunDate: nextRule.nextRunDate,
+          enabled: nextRule.enabled,
+          note: nextRule.note,
+          lastRunDate: nextRule.lastRunDate,
+          endDate: nextRule.endDate,
+          remainingCount: nextRule.remainingCount,
         });
       }
 
@@ -576,14 +632,19 @@ export default function RecurringPage() {
     }
   }
 
-  function deleteRule(rule: RecurringRule) {
+  async function deleteRule(rule: RecurringRule) {
     const confirmed = window.confirm(`確定要刪除「${rule.name}」嗎？`);
 
     if (!confirmed) {
       return;
     }
 
-    setRules((current) => current.filter((item) => item.id !== rule.id));
+    try {
+      await deleteRecurringRule(rule.id);
+      setRules((current) => current.filter((item) => item.id !== rule.id));
+    } catch {
+      setStatusMessage("固定支出刪除失敗");
+    }
   }
 
   return (
@@ -745,13 +806,31 @@ export default function RecurringPage() {
                 </div>
 
                 <div className="mt-4 flex items-center justify-between gap-4">
-                  <div>
-                    <p className="text-xs font-medium text-slate-400">
-                      下次執行日
-                    </p>
-                    <p className="mt-1 text-sm font-semibold text-slate-700">
-                      {formatDate(rule.nextRunDate)}
-                    </p>
+                  <div className="grid gap-3 sm:grid-cols-3">
+                    <div>
+                      <p className="text-xs font-medium text-slate-400">
+                        下次執行日
+                      </p>
+                      <p className="mt-1 text-sm font-semibold text-slate-700">
+                        {formatDate(rule.nextRunDate)}
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-xs font-medium text-slate-400">
+                        結束日期
+                      </p>
+                      <p className="mt-1 text-sm font-semibold text-slate-700">
+                        {formatDate(rule.endDate)}
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-xs font-medium text-slate-400">
+                        剩餘期數
+                      </p>
+                      <p className="mt-1 text-sm font-semibold text-slate-700">
+                        {rule.remainingCount || "未設定"}
+                      </p>
+                    </div>
                   </div>
                   <div className="flex items-center gap-2">
                     <button
@@ -1020,6 +1099,39 @@ export default function RecurringPage() {
                       updateEditingRule("nextRunDate", event.target.value)
                     }
                     className="h-12 rounded-[20px] bg-slate-50 px-4 text-base font-medium outline-none focus:bg-white focus:ring-2 focus:ring-slate-200"
+                  />
+                </label>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <label className="grid gap-2">
+                  <span className="text-sm font-medium text-slate-500">
+                    結束日期
+                  </span>
+                  <input
+                    type="date"
+                    value={editingRule.endDate}
+                    onChange={(event) =>
+                      updateEditingRule("endDate", event.target.value)
+                    }
+                    className="h-12 rounded-[20px] bg-slate-50 px-4 text-base font-medium outline-none focus:bg-white focus:ring-2 focus:ring-slate-200"
+                  />
+                </label>
+
+                <label className="grid gap-2">
+                  <span className="text-sm font-medium text-slate-500">
+                    剩餘期數
+                  </span>
+                  <input
+                    type="number"
+                    min="0"
+                    step="1"
+                    value={editingRule.remainingCount}
+                    onChange={(event) =>
+                      updateEditingRule("remainingCount", event.target.value)
+                    }
+                    className="h-12 rounded-[20px] bg-slate-50 px-4 text-base font-medium outline-none focus:bg-white focus:ring-2 focus:ring-slate-200"
+                    placeholder="例如：6"
                   />
                 </label>
               </div>

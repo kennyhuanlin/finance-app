@@ -33,6 +33,7 @@ type TransactionForm = Omit<Transaction, "amount"> & {
 const typeOptions = ["支出", "收入"];
 const necessityOptions = ["必要", "非必要"];
 const calculatorKeys = ["1", "2", "3", "4", "5", "6", "7", "8", "9", ".", "0"];
+const TRANSACTIONS_PAGE_SIZE = 50;
 
 function formatMoney(value: number) {
   return new Intl.NumberFormat("zh-TW", {
@@ -152,6 +153,7 @@ export default function TransactionsPage() {
     useState<TransactionForm | null>(null);
   const [amountKeyboardOpen, setAmountKeyboardOpen] = useState(false);
   const [message, setMessage] = useState("");
+  const [visibleCount, setVisibleCount] = useState(TRANSACTIONS_PAGE_SIZE);
 
   async function loadTransactions() {
     const sheetTransactions = await getTransactions<Record<string, unknown>>();
@@ -206,6 +208,14 @@ export default function TransactionsPage() {
     editingTransaction?.type === "收入"
       ? incomeCategories
       : expenseCategories;
+  const filteredTransactions = transactions;
+  const visibleTransactions = useMemo(
+    () => filteredTransactions.slice(0, visibleCount),
+    [filteredTransactions, visibleCount],
+  );
+  const visibleTransactionsCount = visibleTransactions.length;
+  const hasMoreTransactions =
+    visibleTransactionsCount < filteredTransactions.length;
 
   function openEditForm(transaction: Transaction) {
     if (transaction.sourceType === "recurring") {
@@ -413,8 +423,12 @@ export default function TransactionsPage() {
             <div>
               <p className="text-sm font-medium text-slate-500">完整明細</p>
               <h2 className="mt-1 text-xl font-semibold tracking-normal">
-                {transactions.length} 筆交易
+                共 {filteredTransactions.length} 筆交易
               </h2>
+              <p className="mt-1 text-sm font-medium text-slate-500">
+                目前顯示 {visibleTransactionsCount} /{" "}
+                {filteredTransactions.length} 筆
+              </p>
             </div>
             <Link
               href="/add"
@@ -425,7 +439,7 @@ export default function TransactionsPage() {
           </div>
 
           <div className="mt-5 divide-y divide-slate-100">
-            {transactions.map((item) => {
+            {visibleTransactions.map((item) => {
               const isIncome = isIncomeTransaction(item);
               const isRecurring = item.sourceType === "recurring";
               const categoryName =
@@ -496,6 +510,23 @@ export default function TransactionsPage() {
               );
             })}
           </div>
+
+          {hasMoreTransactions ? (
+            <button
+              type="button"
+              onClick={() =>
+                setVisibleCount((current) =>
+                  Math.min(
+                    current + TRANSACTIONS_PAGE_SIZE,
+                    filteredTransactions.length,
+                  ),
+                )
+              }
+              className="mt-5 h-12 w-full rounded-full bg-slate-100 text-sm font-semibold text-slate-700 transition hover:bg-slate-200 active:scale-[0.99]"
+            >
+              載入更多
+            </button>
+          ) : null}
         </section>
       </section>
 

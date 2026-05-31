@@ -2,6 +2,30 @@ const SHEETS_API_URL = "/api/sheets";
 
 type SheetName = "transactions" | "recurring_rules" | "categories";
 
+export const recurringRuleColumns = [
+  "id",
+  "name",
+  "type",
+  "expenseType",
+  "necessity",
+  "category",
+  "amount",
+  "frequency",
+  "nextRunDate",
+  "enabled",
+  "note",
+  "lastRunDate",
+  "endDate",
+  "remainingCount",
+] as const;
+
+export type RecurringRuleColumn = (typeof recurringRuleColumns)[number];
+
+export type RecurringRuleSheetRow = Partial<
+  Record<RecurringRuleColumn, string | number | boolean>
+> &
+  Record<string, unknown>;
+
 async function requestSheet<T>(sheet: SheetName): Promise<T[]> {
   const response = await fetch(`${SHEETS_API_URL}?sheet=${sheet}`, {
     method: "GET",
