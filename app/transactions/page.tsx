@@ -33,7 +33,7 @@ type TransactionForm = Omit<Transaction, "amount"> & {
 const typeOptions = ["支出", "收入"];
 const necessityOptions = ["必要", "非必要"];
 const calculatorKeys = ["1", "2", "3", "4", "5", "6", "7", "8", "9", ".", "0"];
-const TRANSACTIONS_PAGE_SIZE = 50;
+const TRANSACTIONS_PAGE_SIZE = 10;
 
 function formatMoney(value: number) {
   return new Intl.NumberFormat("zh-TW", {
@@ -426,8 +426,10 @@ export default function TransactionsPage() {
                 共 {filteredTransactions.length} 筆交易
               </h2>
               <p className="mt-1 text-sm font-medium text-slate-500">
-                目前顯示 {visibleTransactionsCount} /{" "}
-                {filteredTransactions.length} 筆
+                目前顯示：
+                <span className="ml-1">
+                  {visibleTransactionsCount} / {filteredTransactions.length}
+                </span>
               </p>
             </div>
             <Link
