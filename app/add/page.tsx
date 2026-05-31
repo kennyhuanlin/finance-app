@@ -102,22 +102,38 @@ export default function AddRecordPage() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [entries, setEntries] = useState<Entry[]>([]);
 
-  async function fetchRecentEntries() {
+  async function loadRecentEntries() {
     const sheetTransactions = await getTransactions<Record<string, unknown>>();
 
-    setEntries(
-      sortEntriesByCreatedAt(
-        sheetTransactions.map((transaction, index) =>
-          normalizeEntry(transaction, index),
-        ),
-      ).slice(0, 5),
-    );
+    return sortEntriesByCreatedAt(
+      sheetTransactions.map((transaction, index) =>
+        normalizeEntry(transaction, index),
+      ),
+    ).slice(0, 5);
+  }
+
+  async function fetchRecentEntries() {
+    setEntries(await loadRecentEntries());
   }
 
   useEffect(() => {
-    fetchRecentEntries().catch(() => {
-      setEntries([]);
-    });
+    let isMounted = true;
+
+    loadRecentEntries()
+      .then((recentEntries) => {
+        if (isMounted) {
+          setEntries(recentEntries);
+        }
+      })
+      .catch(() => {
+        if (isMounted) {
+          setEntries([]);
+        }
+      });
+
+    return () => {
+      isMounted = false;
+    };
   }, []);
 
   const categoryOptions = useMemo(
@@ -125,17 +141,11 @@ export default function AddRecordPage() {
     [entryType, expenseCategories, incomeCategories],
   );
 
+  const selectedCategory = categoryOptions.some((item) => item.name === category)
+    ? category
+    : categoryOptions[0]?.name ?? "";
   const recentEntries = entries.slice(0, 5);
-  const canSubmit = Number(amount) > 0 && category.trim().length > 0;
-
-  useEffect(() => {
-    if (
-      categoryOptions.length > 0 &&
-      !categoryOptions.some((item) => item.name === category)
-    ) {
-      setCategory(categoryOptions[0].name);
-    }
-  }, [category, categoryOptions]);
+  const canSubmit = Number(amount) > 0 && selectedCategory.trim().length > 0;
 
   function handleTypeChange(type: EntryType) {
     setEntryType(type);
@@ -164,9 +174,9 @@ export default function AddRecordPage() {
       type: entryType,
       expenseType: "",
       necessity: isExpense ? necessity : "",
-      category,
+      category: selectedCategory,
       amount: Number(amount),
-      note: note.trim() || category,
+      note: note.trim() || selectedCategory,
       sourceType: "manual",
       recurringId: "",
     };
@@ -292,7 +302,7 @@ export default function AddRecordPage() {
             <label className="grid gap-2">
               <span className="text-sm font-medium text-slate-500">分類</span>
               <select
-                value={category}
+                value={selectedCategory}
                 onChange={(event) => setCategory(event.target.value)}
                 className="h-13 rounded-[22px] border border-transparent bg-slate-50 px-4 text-base font-medium text-slate-950 outline-none transition focus:border-slate-200 focus:bg-white"
               >

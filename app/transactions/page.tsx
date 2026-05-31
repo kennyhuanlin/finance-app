@@ -153,22 +153,38 @@ export default function TransactionsPage() {
   const [amountKeyboardOpen, setAmountKeyboardOpen] = useState(false);
   const [message, setMessage] = useState("");
 
-  async function fetchTransactions() {
+  async function loadTransactions() {
     const sheetTransactions = await getTransactions<Record<string, unknown>>();
 
-    setTransactions(
-      sortTransactionsByDate(
-        sheetTransactions.map((transaction, index) =>
-          normalizeTransaction(transaction, index),
-        ),
+    return sortTransactionsByDate(
+      sheetTransactions.map((transaction, index) =>
+        normalizeTransaction(transaction, index),
       ),
     );
   }
 
+  async function fetchTransactions() {
+    setTransactions(await loadTransactions());
+  }
+
   useEffect(() => {
-    fetchTransactions().catch(() => {
-      setTransactions([]);
-    });
+    let isMounted = true;
+
+    loadTransactions()
+      .then((sheetTransactions) => {
+        if (isMounted) {
+          setTransactions(sheetTransactions);
+        }
+      })
+      .catch(() => {
+        if (isMounted) {
+          setTransactions([]);
+        }
+      });
+
+    return () => {
+      isMounted = false;
+    };
   }, []);
 
   const incomeTotal = useMemo(

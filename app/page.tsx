@@ -5,25 +5,12 @@ import Link from "next/link";
 import { useCategories } from "./categories-context";
 import {
   categories as fallbackCategories,
-  recurringRules,
   transactions,
 } from "./data";
 import { dedupeCategories } from "./lib/categories";
-import {
-  getCategories,
-  getRecurringRules,
-  getTransactions,
-} from "./lib/googleSheets";
+import { getCategories, getTransactions } from "./lib/googleSheets";
 
 const periods = ["本月", "上月", "本季", "今年", "累積餘額"] as const;
-
-const periodTitles: Record<(typeof periods)[number], string> = {
-  本月: "2026年5月",
-  上月: "2026年4月",
-  本季: "2026年第2季",
-  今年: "2026全年",
-  累積餘額: "累積餘額",
-};
 
 const kpis = [
   {
@@ -68,11 +55,45 @@ function formatMoney(value: number) {
   }).format(Math.round(value));
 }
 
+function parseDateValue(value: string) {
+  if (!value) {
+    return null;
+  }
+
+  const dateOnlyMatch = value.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+
+  if (dateOnlyMatch) {
+    const [, year, month, day] = dateOnlyMatch;
+
+    return new Date(Number(year), Number(month) - 1, Number(day));
+  }
+
+  const parsed = new Date(value);
+
+  if (Number.isNaN(parsed.getTime())) {
+    return null;
+  }
+
+  return parsed;
+}
+
+function getTransactionDateKey(date: string) {
+  const parsed = parseDateValue(date);
+
+  return parsed ? toDateKey(parsed) : "";
+}
+
 function formatDate(date: string) {
+  const parsed = parseDateValue(date);
+
+  if (!parsed) {
+    return date;
+  }
+
   return new Intl.DateTimeFormat("zh-TW", {
     month: "long",
     day: "numeric",
-  }).format(new Date(date));
+  }).format(parsed);
 }
 
 type Period = (typeof periods)[number];
@@ -98,17 +119,7 @@ type DashboardCategory = {
   color: string;
 };
 
-type RecurringRule = {
-  id: string;
-  name: string;
-  type: string;
-  category: string;
-  categoryId?: string;
-  amount: number;
-  frequency: string;
-  nextRunDate?: string;
-  enabled: boolean;
-};
+type LoadState = "loading" | "success" | "error";
 
 function toDateKey(date: Date) {
   const year = date.getFullYear();
@@ -156,6 +167,32 @@ function getDateRange(period: Period) {
   };
 }
 
+function formatPeriodTitle(period: Period) {
+  const today = new Date();
+  const year = today.getFullYear();
+  const month = today.getMonth();
+
+  if (period === "本月") {
+    return `${year}年${month + 1}月`;
+  }
+
+  if (period === "上月") {
+    const previousMonth = new Date(year, month - 1, 1);
+
+    return `${previousMonth.getFullYear()}年${previousMonth.getMonth() + 1}月`;
+  }
+
+  if (period === "本季") {
+    return `${year}年第${Math.floor(month / 3) + 1}季`;
+  }
+
+  if (period === "今年") {
+    return `${year}全年`;
+  }
+
+  return "累積餘額";
+}
+
 function filterTransactionsByPeriod(
   sourceTransactions: Transaction[],
   period: Period,
@@ -166,10 +203,11 @@ function filterTransactionsByPeriod(
     return sourceTransactions;
   }
 
-  return sourceTransactions.filter(
-    (transaction) =>
-      transaction.date >= range.start && transaction.date <= range.end,
-  );
+  return sourceTransactions.filter((transaction) => {
+    const dateKey = getTransactionDateKey(transaction.date);
+
+    return dateKey >= range.start && dateKey <= range.end;
+  });
 }
 
 function isIncomeTransaction(transaction: Transaction) {
@@ -178,10 +216,6 @@ function isIncomeTransaction(transaction: Transaction) {
 
 function isExpenseTransaction(transaction: Transaction) {
   return transaction.type === "支出" || transaction.type === "expense";
-}
-
-function isEnabled(value: unknown) {
-  return value === true || String(value).toLowerCase() === "true";
 }
 
 function isRecurringExpenseTransaction(transaction: Transaction) {
@@ -274,25 +308,6 @@ function normalizeCategory(
     emoji: String(category.emoji ?? "📦"),
     type: String(category.type ?? "expense"),
     color: String(category.color ?? "#64748b"),
-  };
-}
-
-function normalizeRecurringRule(
-  rule: Record<string, unknown>,
-  index: number,
-): RecurringRule {
-  return {
-    id: String(rule.id ?? `sheet-recurring-${index}`),
-    name: String(rule.name ?? ""),
-    type: String(rule.type ?? "支出"),
-    category: String(rule.category ?? ""),
-    categoryId:
-      rule.categoryId === undefined ? undefined : String(rule.categoryId),
-    amount: Number(rule.amount ?? 0),
-    frequency: String(rule.frequency ?? ""),
-    nextRunDate:
-      rule.nextRunDate === undefined ? undefined : String(rule.nextRunDate),
-    enabled: isEnabled(rule.enabled),
   };
 }
 
@@ -397,59 +412,62 @@ export default function Home() {
   const [sourceTransactions, setSourceTransactions] = useState<Transaction[]>(
     [],
   );
-  const [sourceRecurringRules, setSourceRecurringRules] = useState<
-    RecurringRule[]
-  >([]);
   const [sourceCategories, setSourceCategories] = useState<DashboardCategory[]>(
     [],
   );
+  const [transactionsLoadState, setTransactionsLoadState] =
+    useState<LoadState>("loading");
+  const [transactionsErrorMessage, setTransactionsErrorMessage] = useState("");
   const [activePeriod, setActivePeriod] =
     useState<(typeof periods)[number]>("本月");
 
   useEffect(() => {
     let isMounted = true;
 
-    Promise.all([
+    Promise.allSettled([
       getTransactions<Record<string, unknown>>(),
-      getRecurringRules<Record<string, unknown>>(),
       getCategories<Record<string, unknown>>(),
     ])
-      .then(([sheetTransactions, sheetRecurringRules, sheetCategories]) => {
+      .then(([transactionsResult, categoriesResult]) => {
         if (!isMounted) {
           return;
         }
 
-        setSourceTransactions(
-          sheetTransactions.map((transaction, index) =>
-            normalizeTransaction(transaction, index),
-          ),
-        );
-        setSourceRecurringRules(
-          sheetRecurringRules.map((rule, index) =>
-            normalizeRecurringRule(rule, index),
-          ),
-        );
-        setSourceCategories(
-          dedupeCategories(
-            sheetCategories.map((category, index) =>
-              normalizeCategory(category, index),
-            ),
-          ),
-        );
-      })
-      .catch(() => {
-        if (isMounted) {
-          setSourceTransactions(transactions);
-          setSourceRecurringRules(
-            recurringRules.map((rule, index) =>
-              normalizeRecurringRule(rule as Record<string, unknown>, index),
+        if (transactionsResult.status === "fulfilled") {
+          setSourceTransactions(
+            transactionsResult.value.map((transaction, index) =>
+              normalizeTransaction(transaction, index),
             ),
           );
-          setSourceCategories(
-            contextCategories.length > 0
+          setTransactionsLoadState("success");
+          setTransactionsErrorMessage("");
+        } else {
+          setSourceTransactions(transactions);
+          setTransactionsLoadState("error");
+          setTransactionsErrorMessage(
+            transactionsResult.reason instanceof Error
+              ? transactionsResult.reason.message
+              : "交易資料讀取失敗",
+          );
+        }
+
+        setSourceCategories(
+          categoriesResult.status === "fulfilled"
+            ? dedupeCategories(
+                categoriesResult.value.map((category, index) =>
+                  normalizeCategory(category, index),
+                ),
+              )
+            : contextCategories.length > 0
               ? dedupeCategories(contextCategories)
               : dedupeCategories(fallbackCategories),
-          );
+        );
+
+        if (
+          transactionsResult.status === "fulfilled" &&
+          categoriesResult.status === "rejected"
+        ) {
+          setTransactionsErrorMessage("分類資料讀取失敗");
         }
       });
 
@@ -458,7 +476,7 @@ export default function Home() {
     };
   }, [contextCategories]);
 
-  const activePeriodTitle = periodTitles[activePeriod];
+  const activePeriodTitle = formatPeriodTitle(activePeriod);
   const isCumulative = activePeriod === "累積餘額";
   const filteredTransactions = filterTransactionsByPeriod(
     sourceTransactions,
@@ -547,6 +565,18 @@ export default function Home() {
           </div>
         </header>
 
+        {transactionsLoadState === "loading" ? (
+          <p className="rounded-full bg-white/75 px-4 py-2 text-sm font-medium text-slate-500 shadow-sm shadow-slate-200/80 backdrop-blur-xl">
+            Loading...
+          </p>
+        ) : null}
+
+        {transactionsErrorMessage ? (
+          <p className="rounded-full bg-rose-50 px-4 py-2 text-sm font-medium text-rose-600 shadow-sm shadow-rose-100/80">
+            {transactionsErrorMessage}
+          </p>
+        ) : null}
+
         <section className="grid grid-cols-2 gap-3 lg:grid-cols-4">
           {kpis.map((item) => (
             <article
@@ -567,7 +597,9 @@ export default function Home() {
                 {isCumulative ? item.cumulativeLabel : item.label}
               </p>
               <p className="mt-2 text-xl font-semibold tracking-normal text-slate-950 sm:text-2xl">
-                {formatMoney(activeSummary[item.key])}
+                {transactionsLoadState === "loading"
+                  ? "Loading..."
+                  : formatMoney(activeSummary[item.key])}
               </p>
             </article>
           ))}
