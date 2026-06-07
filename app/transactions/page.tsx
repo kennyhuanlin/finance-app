@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useEffect, useMemo, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { useCategories } from "../categories-context";
@@ -74,10 +74,10 @@ function normalizeDate(value: string) {
     return "";
   }
 
-  const datePrefixMatch = value.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  const dateOnlyMatch = value.match(/^(\d{4})-(\d{2})-(\d{2})$/);
 
-  if (datePrefixMatch) {
-    const [, year, month, day] = datePrefixMatch;
+  if (dateOnlyMatch) {
+    const [, year, month, day] = dateOnlyMatch;
 
     return `${year}-${month}-${day}`;
   }
@@ -171,8 +171,12 @@ function isExpenseTransaction(transaction: Transaction) {
   return type === "支出" || type === "expense";
 }
 
+function isRecurringTransaction(transaction: Transaction) {
+  return transaction.sourceType.trim() === "recurring";
+}
+
 function formatSourceTypeLabel(sourceType: string) {
-  return sourceType === "recurring" ? "固定收支" : "手動";
+  return sourceType.trim() === "recurring" ? "固定收支" : "手動";
 }
 
 function normalizeTransaction(
@@ -180,7 +184,7 @@ function normalizeTransaction(
   index: number,
 ): Transaction {
   const type = String(transaction.type ?? "").trim();
-  const sourceType = String(transaction.sourceType ?? "manual");
+  const sourceType = String(transaction.sourceType ?? "manual").trim();
   const expenseType =
     transaction.expenseType === undefined || transaction.expenseType === null
       ? null
@@ -302,44 +306,44 @@ function TransactionsContent() {
       ? incomeCategories
       : expenseCategories;
   const periodFilter = normalizePeriodFilter(periodParam);
-  const filteredTransactions = useMemo(() => {
-    const range = getDateRange(periodFilter);
-
-    const periodFilteredTransactions = transactions.filter((transaction) => {
-      if (!range) {
-        return true;
-      }
-
-      const dateKey = normalizeDate(transaction.date);
-
-      return dateKey >= range.start && dateKey <= range.end;
-    });
-
-    return periodFilteredTransactions.filter((transaction) => {
-      if (typeParam === "income") {
-        return isIncomeTransaction(transaction);
-      }
-
-      if (typeParam === "expense") {
-        return isExpenseTransaction(transaction);
-      }
-
+  const periodRange = getDateRange(periodFilter);
+  const periodRangeStart = periodRange?.start ?? null;
+  const periodRangeEnd = periodRange?.end ?? null;
+  const periodFilteredTransactions = transactions.filter((transaction) => {
+    if (!periodRangeStart || !periodRangeEnd) {
       return true;
-    });
-  }, [periodFilter, transactions, typeParam]);
-  const incomeTotal = useMemo(
-    () =>
-      filteredTransactions
-        .filter(isIncomeTransaction)
-        .reduce((sum, item) => sum + item.amount, 0),
-    [filteredTransactions],
+    }
+
+    const dateKey = normalizeDate(transaction.date);
+
+    return dateKey >= periodRangeStart && dateKey <= periodRangeEnd;
+  });
+  const incomeTransactions = periodFilteredTransactions.filter(
+    isIncomeTransaction,
   );
-  const expenseTotal = useMemo(
-    () =>
-      filteredTransactions
-        .filter(isExpenseTransaction)
-        .reduce((sum, item) => sum + item.amount, 0),
-    [filteredTransactions],
+  const expenseTransactions = periodFilteredTransactions.filter(
+    isExpenseTransaction,
+  );
+  const recurringTransactions = transactions.filter(isRecurringTransaction);
+  const recurringIncomeTransactions = incomeTransactions.filter(
+    isRecurringTransaction,
+  );
+  const recurringExpenseTransactions = expenseTransactions.filter(
+    isRecurringTransaction,
+  );
+  const filteredTransactions =
+    typeParam === "income"
+      ? incomeTransactions
+      : typeParam === "expense"
+        ? expenseTransactions
+        : periodFilteredTransactions;
+  const incomeTotal = incomeTransactions.reduce(
+    (sum, item) => sum + item.amount,
+    0,
+  );
+  const expenseTotal = expenseTransactions.reduce(
+    (sum, item) => sum + item.amount,
+    0,
   );
   const pageTitle =
     typeParam === "income"
@@ -357,21 +361,37 @@ function TransactionsContent() {
             { label: "收入", value: incomeTotal, tone: "text-emerald-600" },
             { label: "支出", value: expenseTotal, tone: "text-rose-600" },
           ];
-  const visibleTransactions = useMemo(
-    () => filteredTransactions.slice(0, visibleCount),
-    [filteredTransactions, visibleCount],
-  );
+  const visibleTransactions = filteredTransactions.slice(0, visibleCount);
   const visibleTransactionsCount = visibleTransactions.length;
   const hasMoreTransactions =
     visibleTransactionsCount < filteredTransactions.length;
 
   console.log("transactions query filter", {
-    typeParam,
     periodParam,
-    transactionsLength: transactions.length,
-    filteredTransactionsLength: filteredTransactions.length,
-    visibleTransactionsLength: visibleTransactions.length,
+    rangeStart: periodRangeStart,
+    rangeEnd: periodRangeEnd,
+    "transactions.length": transactions.length,
+    "recurringTransactions.length": recurringTransactions.length,
+    "periodFilteredTransactions.length": periodFilteredTransactions.length,
+    "incomeTransactions.length": incomeTransactions.length,
+    "expenseTransactions.length": expenseTransactions.length,
+    "recurringIncomeTransactions.length": recurringIncomeTransactions.length,
+    "recurringExpenseTransactions.length": recurringExpenseTransactions.length,
   });
+  console.log(
+    "transactions period date debug",
+    transactions.map((transaction) => {
+      const normalizedDate = normalizeDate(transaction.date);
+
+      return {
+        rawDate: transaction.date,
+        normalizedDate,
+        includedInPeriod: periodRangeStart && periodRangeEnd
+          ? normalizedDate >= periodRangeStart && normalizedDate <= periodRangeEnd
+          : true,
+      };
+    }),
+  );
 
   function openEditForm(transaction: Transaction) {
     if (transaction.sourceType === "recurring") {
