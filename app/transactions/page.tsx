@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { Suspense, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { useCategories } from "../categories-context";
 import { formatCategoryLabel } from "../lib/categories";
 import {
@@ -78,22 +79,22 @@ function formatDate(date: string) {
   }).format(new Date(date));
 }
 
-function parseDateValue(value: string) {
+function normalizeDate(value: string) {
   if (!value) {
-    return null;
+    return "";
   }
 
-  const dateOnlyMatch = value.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  const datePrefixMatch = value.match(/^(\d{4})-(\d{2})-(\d{2})/);
 
-  if (dateOnlyMatch) {
-    const [, year, month, day] = dateOnlyMatch;
+  if (datePrefixMatch) {
+    const [, year, month, day] = datePrefixMatch;
 
-    return new Date(Number(year), Number(month) - 1, Number(day));
+    return `${year}-${month}-${day}`;
   }
 
   const parsed = new Date(value);
 
-  return Number.isNaN(parsed.getTime()) ? null : parsed;
+  return Number.isNaN(parsed.getTime()) ? "" : toDateKey(parsed);
 }
 
 function toDateKey(date: Date) {
@@ -102,12 +103,6 @@ function toDateKey(date: Date) {
   const day = String(date.getDate()).padStart(2, "0");
 
   return `${year}-${month}-${day}`;
-}
-
-function getTransactionDateKey(date: string) {
-  const parsed = parseDateValue(date);
-
-  return parsed ? toDateKey(parsed) : "";
 }
 
 function getDateRange(period: NormalizedPeriod) {
@@ -174,14 +169,6 @@ function formatPeriodFilterLabel(period: NormalizedPeriod) {
   };
 
   return labels[period];
-}
-
-function getInitialSearchParam(name: string) {
-  if (typeof window === "undefined") {
-    return null;
-  }
-
-  return new URLSearchParams(window.location.search).get(name);
 }
 
 function isIncomeTransaction(transaction: Transaction) {
@@ -262,7 +249,10 @@ function BackIcon() {
   );
 }
 
-export default function TransactionsPage() {
+function TransactionsContent() {
+  const searchParams = useSearchParams();
+  const typeParam = searchParams.get("type");
+  const periodParam = searchParams.get("period");
   const { categories } = useCategories();
   const expenseCategories = categories.filter((item) => item.type === "expense");
   const incomeCategories = categories.filter((item) => item.type === "income");
@@ -272,12 +262,6 @@ export default function TransactionsPage() {
   const [amountKeyboardOpen, setAmountKeyboardOpen] = useState(false);
   const [message, setMessage] = useState("");
   const [visibleCount, setVisibleCount] = useState(TRANSACTIONS_PAGE_SIZE);
-  const [typeFilter] = useState<TransactionTypeFilter>(() =>
-    normalizeTypeFilter(getInitialSearchParam("type")),
-  );
-  const [periodFilter] = useState<NormalizedPeriod>(() =>
-    normalizePeriodFilter(getInitialSearchParam("period")),
-  );
   const [isSavingTransaction, setIsSavingTransaction] = useState(false);
   const [deletingTransactionId, setDeletingTransactionId] = useState<
     string | null
@@ -321,10 +305,20 @@ export default function TransactionsPage() {
     editingTransaction?.type === "收入"
       ? incomeCategories
       : expenseCategories;
+  const typeFilter = normalizeTypeFilter(typeParam);
+  const periodFilter = normalizePeriodFilter(periodParam);
   const filteredTransactions = useMemo(() => {
     const range = getDateRange(periodFilter);
 
-    return transactions.filter((transaction) => {
+    const periodFilteredTransactions = range
+      ? transactions.filter((transaction) => {
+          const dateKey = normalizeDate(transaction.date);
+
+          return dateKey >= range.start && dateKey <= range.end;
+        })
+      : transactions;
+
+    return periodFilteredTransactions.filter((transaction) => {
       if (typeFilter === "income" && !isIncomeTransaction(transaction)) {
         return false;
       }
@@ -333,13 +327,7 @@ export default function TransactionsPage() {
         return false;
       }
 
-      if (!range) {
-        return true;
-      }
-
-      const dateKey = getTransactionDateKey(transaction.date);
-
-      return dateKey >= range.start && dateKey <= range.end;
+      return true;
     });
   }, [periodFilter, transactions, typeFilter]);
   const incomeTotal = useMemo(
@@ -928,5 +916,13 @@ export default function TransactionsPage() {
         </div>
       ) : null}
     </main>
+  );
+}
+
+export default function TransactionsPage() {
+  return (
+    <Suspense fallback={null}>
+      <TransactionsContent />
+    </Suspense>
   );
 }
