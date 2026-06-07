@@ -160,11 +160,19 @@ function formatPeriodFilterLabel(period: NormalizedPeriod) {
 }
 
 function isIncomeTransaction(transaction: Transaction) {
-  return transaction.type === "收入" || transaction.type === "income";
+  const type = transaction.type.trim();
+
+  return type === "收入" || type === "income";
 }
 
 function isExpenseTransaction(transaction: Transaction) {
-  return transaction.type === "支出" || transaction.type === "expense";
+  const type = transaction.type.trim();
+
+  return type === "支出" || type === "expense";
+}
+
+function formatSourceTypeLabel(sourceType: string) {
+  return sourceType === "recurring" ? "固定收支" : "手動";
 }
 
 function normalizeTransaction(
@@ -340,7 +348,15 @@ function TransactionsContent() {
         ? "支出明細"
         : "全部交易";
   const periodLabel = formatPeriodFilterLabel(periodFilter);
-  const showTypeSummary = typeParam === "income" || typeParam === "expense";
+  const summaryCards =
+    typeParam === "income"
+      ? [{ label: "收入", value: incomeTotal, tone: "text-emerald-600" }]
+      : typeParam === "expense"
+        ? [{ label: "支出", value: expenseTotal, tone: "text-rose-600" }]
+        : [
+            { label: "收入", value: incomeTotal, tone: "text-emerald-600" },
+            { label: "支出", value: expenseTotal, tone: "text-rose-600" },
+          ];
   const visibleTransactions = useMemo(
     () => filteredTransactions.slice(0, visibleCount),
     [filteredTransactions, visibleCount],
@@ -580,22 +596,21 @@ function TransactionsContent() {
           </p>
         ) : null}
 
-        {showTypeSummary ? (
-          <section className="grid grid-cols-2 gap-3">
-            <article className="rounded-[28px] border border-white/75 bg-white/80 p-4 shadow-sm shadow-slate-200/80 backdrop-blur-xl">
-              <p className="text-sm font-medium text-slate-500">收入</p>
-              <p className="mt-2 text-xl font-semibold text-emerald-600">
-                {formatMoney(incomeTotal)}
+        <section className="grid grid-cols-2 gap-3">
+          {summaryCards.map((card) => (
+            <article
+              key={card.label}
+              className="rounded-[28px] border border-white/75 bg-white/80 p-4 shadow-sm shadow-slate-200/80 backdrop-blur-xl"
+            >
+              <p className="text-sm font-medium text-slate-500">
+                {card.label}
+              </p>
+              <p className={`mt-2 text-xl font-semibold ${card.tone}`}>
+                {formatMoney(card.value)}
               </p>
             </article>
-            <article className="rounded-[28px] border border-white/75 bg-white/80 p-4 shadow-sm shadow-slate-200/80 backdrop-blur-xl">
-              <p className="text-sm font-medium text-slate-500">支出</p>
-              <p className="mt-2 text-xl font-semibold text-rose-600">
-                {formatMoney(expenseTotal)}
-              </p>
-            </article>
-          </section>
-        ) : null}
+          ))}
+        </section>
 
         <section className="rounded-[32px] border border-white/75 bg-white/80 p-5 shadow-sm shadow-slate-200/80 backdrop-blur-xl">
           <div className="flex items-center justify-between gap-4">
@@ -623,6 +638,7 @@ function TransactionsContent() {
             {visibleTransactions.map((item) => {
               const isIncome = isIncomeTransaction(item);
               const isRecurring = item.sourceType === "recurring";
+              const sourceTypeLabel = formatSourceTypeLabel(item.sourceType);
               const categoryName =
                 categories.find((category) => category.id === item.categoryId)
                   ?.name ?? item.category;
@@ -645,11 +661,15 @@ function TransactionsContent() {
                           <p className="truncate text-sm font-semibold text-slate-950">
                             {item.note}
                           </p>
-                          {isRecurring ? (
-                            <span className="rounded-full bg-violet-50 px-2 py-0.5 text-xs font-medium text-violet-700">
-                              🔁 固定支出
-                            </span>
-                          ) : null}
+                          <span
+                            className={`rounded-full px-2 py-0.5 text-xs font-medium ${
+                              isRecurring
+                                ? "bg-violet-50 text-violet-700"
+                                : "bg-slate-100 text-slate-500"
+                            }`}
+                          >
+                            {sourceTypeLabel}
+                          </span>
                         </div>
                         <p className="mt-1 truncate text-xs font-medium text-slate-400">
                           {formatDate(item.date)} · {categoryName} ·{" "}

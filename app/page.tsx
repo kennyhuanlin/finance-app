@@ -211,11 +211,15 @@ function filterTransactionsByPeriod(
 }
 
 function isIncomeTransaction(transaction: Transaction) {
-  return transaction.type === "收入" || transaction.type === "income";
+  const type = transaction.type.trim();
+
+  return type === "收入" || type === "income";
 }
 
 function isExpenseTransaction(transaction: Transaction) {
-  return transaction.type === "支出" || transaction.type === "expense";
+  const type = transaction.type.trim();
+
+  return type === "支出" || type === "expense";
 }
 
 function isRecurringExpenseTransaction(transaction: Transaction) {
@@ -250,7 +254,7 @@ function normalizeTransaction(
   return {
     id: String(transaction.id ?? `sheet-tx-${index}`),
     date: String(transaction.date ?? ""),
-    type: String(transaction.type ?? ""),
+    type: String(transaction.type ?? "").trim(),
     category: String(transaction.category ?? ""),
     categoryId:
       transaction.categoryId === undefined
