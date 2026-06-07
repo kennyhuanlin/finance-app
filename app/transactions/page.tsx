@@ -35,18 +35,8 @@ const typeOptions = ["支出", "收入"];
 const necessityOptions = ["必要", "非必要"];
 const calculatorKeys = ["1", "2", "3", "4", "5", "6", "7", "8", "9", ".", "0"];
 const TRANSACTIONS_PAGE_SIZE = 10;
-const periodQueryMap = {
-  current: "thisMonth",
-  thisMonth: "thisMonth",
-  lastMonth: "lastMonth",
-  quarter: "quarter",
-  year: "year",
-  all: "all",
-} as const;
 
-type TransactionTypeFilter = "income" | "expense" | "all";
-type PeriodQuery = keyof typeof periodQueryMap;
-type NormalizedPeriod = (typeof periodQueryMap)[PeriodQuery];
+type NormalizedPeriod = "thisMonth" | "lastMonth" | "quarter" | "year" | "all";
 
 function formatMoney(value: number) {
   return new Intl.NumberFormat("zh-TW", {
@@ -143,17 +133,15 @@ function getDateRange(period: NormalizedPeriod) {
   };
 }
 
-function normalizeTypeFilter(value: string | null): TransactionTypeFilter {
-  if (value === "income" || value === "expense") {
-    return value;
-  }
-
-  return "all";
-}
-
 function normalizePeriodFilter(value: string | null): NormalizedPeriod {
-  if (value && value in periodQueryMap) {
-    return periodQueryMap[value as PeriodQuery];
+  if (
+    value === "thisMonth" ||
+    value === "lastMonth" ||
+    value === "quarter" ||
+    value === "year" ||
+    value === "all"
+  ) {
+    return value;
   }
 
   return "all";
@@ -183,7 +171,7 @@ function normalizeTransaction(
   transaction: Record<string, unknown>,
   index: number,
 ): Transaction {
-  const type = String(transaction.type ?? "");
+  const type = String(transaction.type ?? "").trim();
   const sourceType = String(transaction.sourceType ?? "manual");
   const expenseType =
     transaction.expenseType === undefined || transaction.expenseType === null
@@ -305,31 +293,32 @@ function TransactionsContent() {
     editingTransaction?.type === "收入"
       ? incomeCategories
       : expenseCategories;
-  const typeFilter = normalizeTypeFilter(typeParam);
   const periodFilter = normalizePeriodFilter(periodParam);
   const filteredTransactions = useMemo(() => {
     const range = getDateRange(periodFilter);
 
-    const periodFilteredTransactions = range
-      ? transactions.filter((transaction) => {
-          const dateKey = normalizeDate(transaction.date);
-
-          return dateKey >= range.start && dateKey <= range.end;
-        })
-      : transactions;
-
-    return periodFilteredTransactions.filter((transaction) => {
-      if (typeFilter === "income" && !isIncomeTransaction(transaction)) {
-        return false;
+    const periodFilteredTransactions = transactions.filter((transaction) => {
+      if (!range) {
+        return true;
       }
 
-      if (typeFilter === "expense" && !isExpenseTransaction(transaction)) {
-        return false;
+      const dateKey = normalizeDate(transaction.date);
+
+      return dateKey >= range.start && dateKey <= range.end;
+    });
+
+    return periodFilteredTransactions.filter((transaction) => {
+      if (typeParam === "income") {
+        return isIncomeTransaction(transaction);
+      }
+
+      if (typeParam === "expense") {
+        return isExpenseTransaction(transaction);
       }
 
       return true;
     });
-  }, [periodFilter, transactions, typeFilter]);
+  }, [periodFilter, transactions, typeParam]);
   const incomeTotal = useMemo(
     () =>
       filteredTransactions
@@ -345,13 +334,13 @@ function TransactionsContent() {
     [filteredTransactions],
   );
   const pageTitle =
-    typeFilter === "income"
+    typeParam === "income"
       ? "收入明細"
-      : typeFilter === "expense"
+      : typeParam === "expense"
         ? "支出明細"
         : "全部交易";
   const periodLabel = formatPeriodFilterLabel(periodFilter);
-  const showTypeSummary = typeFilter !== "all";
+  const showTypeSummary = typeParam === "income" || typeParam === "expense";
   const visibleTransactions = useMemo(
     () => filteredTransactions.slice(0, visibleCount),
     [filteredTransactions, visibleCount],
@@ -359,6 +348,14 @@ function TransactionsContent() {
   const visibleTransactionsCount = visibleTransactions.length;
   const hasMoreTransactions =
     visibleTransactionsCount < filteredTransactions.length;
+
+  console.log("transactions query filter", {
+    typeParam,
+    periodParam,
+    transactionsLength: transactions.length,
+    filteredTransactionsLength: filteredTransactions.length,
+    visibleTransactionsLength: visibleTransactions.length,
+  });
 
   function openEditForm(transaction: Transaction) {
     if (transaction.sourceType === "recurring") {
