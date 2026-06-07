@@ -323,6 +323,7 @@ export default function RecurringPage() {
   const [statusMessage, setStatusMessage] = useState("");
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
+  const [deletingRuleId, setDeletingRuleId] = useState<string | null>(null);
 
   useEffect(() => {
     let isMounted = true;
@@ -633,17 +634,26 @@ export default function RecurringPage() {
   }
 
   async function deleteRule(rule: RecurringRule) {
+    if (deletingRuleId) {
+      return;
+    }
+
     const confirmed = window.confirm(`確定要刪除「${rule.name}」嗎？`);
 
     if (!confirmed) {
       return;
     }
 
+    setDeletingRuleId(rule.id);
+    setStatusMessage("");
+
     try {
       await deleteRecurringRule(rule.id);
       setRules((current) => current.filter((item) => item.id !== rule.id));
     } catch {
       setStatusMessage("固定支出刪除失敗");
+    } finally {
+      setDeletingRuleId(null);
     }
   }
 
@@ -843,9 +853,10 @@ export default function RecurringPage() {
                     <button
                       type="button"
                       onClick={() => deleteRule(rule)}
-                      className="rounded-full bg-rose-50 px-3 py-1.5 text-sm font-medium text-rose-600 transition active:scale-[0.98]"
+                      disabled={deletingRuleId !== null}
+                      className="rounded-full bg-rose-50 px-3 py-1.5 text-sm font-medium text-rose-600 transition active:scale-[0.98] disabled:bg-slate-100 disabled:text-slate-400"
                     >
-                      刪除
+                      {deletingRuleId === rule.id ? "刪除中..." : "刪除"}
                     </button>
                     <button
                       type="button"
@@ -1185,14 +1196,15 @@ export default function RecurringPage() {
                   setEditingRule(null);
                   setAmountKeyboardOpen(false);
                 }}
-                className="h-13 rounded-full bg-slate-100 text-base font-semibold text-slate-600"
+                disabled={isSaving}
+                className="h-13 rounded-full bg-slate-100 text-base font-semibold text-slate-600 disabled:text-slate-400"
               >
                 取消
               </button>
               <button
                 type="submit"
                 disabled={isSaving}
-                className="h-13 rounded-full bg-slate-950 text-base font-semibold text-white shadow-lg shadow-slate-300/80"
+                className="h-13 rounded-full bg-slate-950 text-base font-semibold text-white shadow-lg shadow-slate-300/80 disabled:bg-slate-300 disabled:shadow-none"
               >
                 {isSaving ? "儲存中..." : "儲存"}
               </button>

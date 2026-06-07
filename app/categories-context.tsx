@@ -13,7 +13,12 @@ import {
   dedupeCategories,
   hasDuplicateCategory,
 } from "./lib/categories";
-import { createCategory, getCategories } from "./lib/googleSheets";
+import {
+  createCategory,
+  deleteCategory as deleteSheetCategory,
+  getCategories,
+  updateCategory as updateSheetCategory,
+} from "./lib/googleSheets";
 
 export type CategoryType = "income" | "expense";
 
@@ -30,8 +35,8 @@ type CategoriesContextValue = {
   isLoadingCategories: boolean;
   refreshCategories: () => Promise<void>;
   addCategory: (category: Omit<Category, "id">) => Promise<void>;
-  updateCategory: (category: Category) => void;
-  deleteCategory: (id: string) => void;
+  updateCategory: (category: Category) => Promise<void>;
+  deleteCategory: (id: string) => Promise<void>;
 };
 
 const CategoriesContext = createContext<CategoriesContextValue | null>(null);
@@ -114,13 +119,19 @@ export function CategoriesProvider({ children }: { children: ReactNode }) {
         });
         await refreshCategories();
       },
-      updateCategory: (category) => {
-        setCategories((current) =>
-          current.map((item) => (item.id === category.id ? category : item)),
-        );
+      updateCategory: async (category) => {
+        await updateSheetCategory(category.id, {
+          id: category.id,
+          name: category.name.trim(),
+          emoji: category.emoji,
+          type: category.type,
+          color: category.color,
+        });
+        await refreshCategories();
       },
-      deleteCategory: (id) => {
-        setCategories((current) => current.filter((item) => item.id !== id));
+      deleteCategory: async (id) => {
+        await deleteSheetCategory(id);
+        await refreshCategories();
       },
     }),
     [categories, isLoadingCategories, refreshCategories],

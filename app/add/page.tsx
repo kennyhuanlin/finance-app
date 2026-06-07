@@ -422,7 +422,7 @@ export default function AddRecordPage() {
             disabled={!canSubmit || isSubmitting}
             className="flex h-14 w-full items-center justify-center rounded-full bg-slate-950 text-base font-semibold text-white shadow-lg shadow-slate-300/80 transition active:scale-[0.99] disabled:bg-slate-300 disabled:shadow-none"
           >
-            {isSubmitting ? "新增中..." : "新增紀錄"}
+            {isSubmitting ? "儲存中..." : "新增紀錄"}
           </button>
         </div>
       </div>

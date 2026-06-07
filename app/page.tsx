@@ -224,12 +224,6 @@ function isRecurringExpenseTransaction(transaction: Transaction) {
   );
 }
 
-function isRecurringIncomeTransaction(transaction: Transaction) {
-  return (
-    isIncomeTransaction(transaction) && transaction.sourceType === "recurring"
-  );
-}
-
 function calculateSummary(sourceTransactions: Transaction[]) {
   const income = sourceTransactions
     .filter(isIncomeTransaction)
@@ -246,21 +240,6 @@ function calculateSummary(sourceTransactions: Transaction[]) {
     expense,
     balance: income - expense,
     fixedExpense,
-  };
-}
-
-function calculateFixedCashFlow(sourceTransactions: Transaction[]) {
-  const fixedIncome = sourceTransactions
-    .filter(isRecurringIncomeTransaction)
-    .reduce((sum, transaction) => sum + Number(transaction.amount), 0);
-  const fixedExpense = sourceTransactions
-    .filter(isRecurringExpenseTransaction)
-    .reduce((sum, transaction) => sum + Number(transaction.amount), 0);
-
-  return {
-    fixedIncome,
-    fixedExpense,
-    fixedNet: fixedIncome - fixedExpense,
   };
 }
 
@@ -296,6 +275,26 @@ function normalizeTransaction(
         ? undefined
         : String(transaction.createdAt),
   };
+}
+
+function periodToQueryValue(period: Period) {
+  if (period === "本月") {
+    return "thisMonth";
+  }
+
+  if (period === "上月") {
+    return "lastMonth";
+  }
+
+  if (period === "本季") {
+    return "quarter";
+  }
+
+  if (period === "今年") {
+    return "year";
+  }
+
+  return "all";
 }
 
 function normalizeCategory(
@@ -483,7 +482,6 @@ export default function Home() {
     activePeriod,
   );
   const activeSummary = calculateSummary(filteredTransactions);
-  const fixedCashFlow = calculateFixedCashFlow(filteredTransactions);
   const recentTransactions = [...filteredTransactions].sort((a, b) =>
     (b.createdAt || b.date).localeCompare(a.createdAt || a.date),
   ).slice(0, 5);
@@ -578,76 +576,44 @@ export default function Home() {
         ) : null}
 
         <section className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-          {kpis.map((item) => (
-            <article
-              key={item.key}
-              className="rounded-[28px] border border-white/75 bg-white/80 p-4 shadow-sm shadow-slate-200/80 backdrop-blur-xl sm:p-5"
-            >
-              <div className="mb-4 flex items-center justify-between gap-3">
-                <span
-                  className={`grid h-9 w-9 place-items-center rounded-2xl text-sm font-semibold ${item.tone}`}
+          {kpis.map((item) => {
+            const card = (
+              <article className="h-full rounded-[28px] border border-white/75 bg-white/80 p-4 shadow-sm shadow-slate-200/80 backdrop-blur-xl transition sm:p-5">
+                <div className="mb-4 flex items-center justify-between gap-3">
+                  <span
+                    className={`grid h-9 w-9 place-items-center rounded-2xl text-sm font-semibold ${item.tone}`}
+                  >
+                    {item.icon}
+                  </span>
+                  <span
+                    className={`h-2 w-10 rounded-full bg-gradient-to-r ${item.accent}`}
+                  />
+                </div>
+                <p className="text-sm font-medium text-slate-500">
+                  {isCumulative ? item.cumulativeLabel : item.label}
+                </p>
+                <p className="mt-2 text-xl font-semibold tracking-normal text-slate-950 sm:text-2xl">
+                  {transactionsLoadState === "loading"
+                    ? "Loading..."
+                    : formatMoney(activeSummary[item.key])}
+                </p>
+              </article>
+            );
+
+            if (item.key === "income" || item.key === "expense") {
+              return (
+                <Link
+                  key={item.key}
+                  href={`/transactions?type=${item.key}&period=${periodToQueryValue(activePeriod)}`}
+                  className="block rounded-[28px] transition hover:-translate-y-0.5 focus:outline-none focus:ring-2 focus:ring-slate-300"
                 >
-                  {item.icon}
-                </span>
-                <span
-                  className={`h-2 w-10 rounded-full bg-gradient-to-r ${item.accent}`}
-                />
-              </div>
-              <p className="text-sm font-medium text-slate-500">
-                {isCumulative ? item.cumulativeLabel : item.label}
-              </p>
-              <p className="mt-2 text-xl font-semibold tracking-normal text-slate-950 sm:text-2xl">
-                {transactionsLoadState === "loading"
-                  ? "Loading..."
-                  : formatMoney(activeSummary[item.key])}
-              </p>
-            </article>
-          ))}
-        </section>
+                  {card}
+                </Link>
+              );
+            }
 
-        <section className="rounded-[32px] border border-white/75 bg-white/80 p-5 shadow-sm shadow-slate-200/80 backdrop-blur-xl sm:p-6">
-          <div className="flex items-start justify-between gap-4">
-            <div>
-              <p className="text-sm font-medium text-slate-500">
-                固定現金流分析
-              </p>
-              <h2 className="mt-1 text-xl font-semibold tracking-normal">
-                {activePeriod}固定收支
-              </h2>
-            </div>
-            {fixedCashFlow.fixedNet < 0 ? (
-              <span className="rounded-full bg-rose-50 px-3 py-1 text-xs font-semibold text-rose-600 sm:text-sm">
-                每月固定現金流為負
-              </span>
-            ) : null}
-          </div>
-
-          <div className="mt-5 grid gap-3 sm:grid-cols-3">
-            <article className="rounded-[24px] bg-emerald-50/80 p-4">
-              <p className="text-sm font-medium text-emerald-700">固定收入</p>
-              <p className="mt-2 text-xl font-semibold tracking-normal text-emerald-600">
-                {formatMoney(fixedCashFlow.fixedIncome)}
-              </p>
-            </article>
-            <article className="rounded-[24px] bg-rose-50/80 p-4">
-              <p className="text-sm font-medium text-rose-700">固定支出</p>
-              <p className="mt-2 text-xl font-semibold tracking-normal text-rose-600">
-                {formatMoney(fixedCashFlow.fixedExpense)}
-              </p>
-            </article>
-            <article className="rounded-[24px] bg-slate-50/80 p-4">
-              <p className="text-sm font-medium text-slate-500">固定淨流</p>
-              <p
-                className={`mt-2 text-xl font-semibold tracking-normal ${
-                  fixedCashFlow.fixedNet >= 0
-                    ? "text-emerald-600"
-                    : "text-rose-600"
-                }`}
-              >
-                {formatMoney(fixedCashFlow.fixedNet)}
-              </p>
-            </article>
-          </div>
+            return <div key={item.key}>{card}</div>;
+          })}
         </section>
 
         <section className="grid gap-4 lg:grid-cols-[0.95fr_1.05fr]">

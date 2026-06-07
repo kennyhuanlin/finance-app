@@ -34,6 +34,18 @@ const typeOptions = ["支出", "收入"];
 const necessityOptions = ["必要", "非必要"];
 const calculatorKeys = ["1", "2", "3", "4", "5", "6", "7", "8", "9", ".", "0"];
 const TRANSACTIONS_PAGE_SIZE = 10;
+const periodQueryMap = {
+  current: "thisMonth",
+  thisMonth: "thisMonth",
+  lastMonth: "lastMonth",
+  quarter: "quarter",
+  year: "year",
+  all: "all",
+} as const;
+
+type TransactionTypeFilter = "income" | "expense" | "all";
+type PeriodQuery = keyof typeof periodQueryMap;
+type NormalizedPeriod = (typeof periodQueryMap)[PeriodQuery];
 
 function formatMoney(value: number) {
   return new Intl.NumberFormat("zh-TW", {
@@ -64,6 +76,100 @@ function formatDate(date: string) {
     day: "numeric",
     weekday: "short",
   }).format(new Date(date));
+}
+
+function parseDateValue(value: string) {
+  if (!value) {
+    return null;
+  }
+
+  const dateOnlyMatch = value.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+
+  if (dateOnlyMatch) {
+    const [, year, month, day] = dateOnlyMatch;
+
+    return new Date(Number(year), Number(month) - 1, Number(day));
+  }
+
+  const parsed = new Date(value);
+
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function toDateKey(date: Date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+
+  return `${year}-${month}-${day}`;
+}
+
+function getTransactionDateKey(date: string) {
+  const parsed = parseDateValue(date);
+
+  return parsed ? toDateKey(parsed) : "";
+}
+
+function getDateRange(period: NormalizedPeriod) {
+  if (period === "all") {
+    return null;
+  }
+
+  const today = new Date();
+  const year = today.getFullYear();
+  const month = today.getMonth();
+
+  if (period === "thisMonth") {
+    return {
+      start: toDateKey(new Date(year, month, 1)),
+      end: toDateKey(new Date(year, month + 1, 0)),
+    };
+  }
+
+  if (period === "lastMonth") {
+    return {
+      start: toDateKey(new Date(year, month - 1, 1)),
+      end: toDateKey(new Date(year, month, 0)),
+    };
+  }
+
+  if (period === "quarter") {
+    const quarterStartMonth = Math.floor(month / 3) * 3;
+
+    return {
+      start: toDateKey(new Date(year, quarterStartMonth, 1)),
+      end: toDateKey(new Date(year, quarterStartMonth + 3, 0)),
+    };
+  }
+
+  return {
+    start: toDateKey(new Date(year, 0, 1)),
+    end: toDateKey(new Date(year, 11, 31)),
+  };
+}
+
+function normalizeTypeFilter(value: string | null): TransactionTypeFilter {
+  if (value === "income" || value === "expense") {
+    return value;
+  }
+
+  return "all";
+}
+
+function normalizePeriodFilter(value: string | null): NormalizedPeriod {
+  if (value && value in periodQueryMap) {
+    return periodQueryMap[value as PeriodQuery];
+  }
+
+  return "all";
+}
+
+function getInitialSearchParam(name: string) {
+  if (typeof window === "undefined") {
+    return null;
+  }
+
+  return new URLSearchParams(window.location.search).get(name);
 }
 
 function isIncomeTransaction(transaction: Transaction) {
@@ -154,6 +260,16 @@ export default function TransactionsPage() {
   const [amountKeyboardOpen, setAmountKeyboardOpen] = useState(false);
   const [message, setMessage] = useState("");
   const [visibleCount, setVisibleCount] = useState(TRANSACTIONS_PAGE_SIZE);
+  const [typeFilter] = useState<TransactionTypeFilter>(() =>
+    normalizeTypeFilter(getInitialSearchParam("type")),
+  );
+  const [periodFilter] = useState<NormalizedPeriod>(() =>
+    normalizePeriodFilter(getInitialSearchParam("period")),
+  );
+  const [isSavingTransaction, setIsSavingTransaction] = useState(false);
+  const [deletingTransactionId, setDeletingTransactionId] = useState<
+    string | null
+  >(null);
 
   async function loadTransactions() {
     const sheetTransactions = await getTransactions<Record<string, unknown>>();
@@ -189,26 +305,51 @@ export default function TransactionsPage() {
     };
   }, []);
 
-  const incomeTotal = useMemo(
-    () =>
-      transactions
-        .filter(isIncomeTransaction)
-        .reduce((sum, item) => sum + item.amount, 0),
-    [transactions],
-  );
-  const expenseTotal = useMemo(
-    () =>
-      transactions
-        .filter(isExpenseTransaction)
-        .reduce((sum, item) => sum + item.amount, 0),
-    [transactions],
-  );
-
   const categoryOptions =
     editingTransaction?.type === "收入"
       ? incomeCategories
       : expenseCategories;
-  const filteredTransactions = transactions;
+  const filteredTransactions = useMemo(() => {
+    const range = getDateRange(periodFilter);
+
+    return transactions.filter((transaction) => {
+      if (typeFilter === "income" && !isIncomeTransaction(transaction)) {
+        return false;
+      }
+
+      if (typeFilter === "expense" && !isExpenseTransaction(transaction)) {
+        return false;
+      }
+
+      if (!range) {
+        return true;
+      }
+
+      const dateKey = getTransactionDateKey(transaction.date);
+
+      return dateKey >= range.start && dateKey <= range.end;
+    });
+  }, [periodFilter, transactions, typeFilter]);
+  const incomeTotal = useMemo(
+    () =>
+      filteredTransactions
+        .filter(isIncomeTransaction)
+        .reduce((sum, item) => sum + item.amount, 0),
+    [filteredTransactions],
+  );
+  const expenseTotal = useMemo(
+    () =>
+      filteredTransactions
+        .filter(isExpenseTransaction)
+        .reduce((sum, item) => sum + item.amount, 0),
+    [filteredTransactions],
+  );
+  const pageTitle =
+    typeFilter === "income"
+      ? "收入明細"
+      : typeFilter === "expense"
+        ? "支出明細"
+        : "全部交易";
   const visibleTransactions = useMemo(
     () => filteredTransactions.slice(0, visibleCount),
     [filteredTransactions, visibleCount],
@@ -325,7 +466,8 @@ export default function TransactionsPage() {
     if (
       !editingTransaction ||
       !editingTransaction.note.trim() ||
-      Number(editingTransaction.amount) <= 0
+      Number(editingTransaction.amount) <= 0 ||
+      isSavingTransaction
     ) {
       return;
     }
@@ -342,27 +484,41 @@ export default function TransactionsPage() {
       necessity: isExpense ? editingTransaction.necessity || "必要" : "",
     };
 
-    await updateTransaction(nextTransaction.id, {
-      id: nextTransaction.id,
-      createdAt: nextTransaction.createdAt ?? "",
-      date: nextTransaction.date,
-      type: nextTransaction.type,
-      expenseType: "",
-      nature: "",
-      necessity: nextTransaction.necessity,
-      category: nextTransaction.category,
-      categoryId: nextTransaction.categoryId ?? "",
-      amount: Number(nextTransaction.amount),
-      note: nextTransaction.note,
-      sourceType: nextTransaction.sourceType,
-      recurringId: nextTransaction.recurringId ?? "",
-    });
-    await fetchTransactions();
-    setEditingTransaction(null);
-    setAmountKeyboardOpen(false);
+    setIsSavingTransaction(true);
+    setMessage("");
+
+    try {
+      await updateTransaction(nextTransaction.id, {
+        id: nextTransaction.id,
+        createdAt: nextTransaction.createdAt ?? "",
+        date: nextTransaction.date,
+        type: nextTransaction.type,
+        expenseType: "",
+        nature: "",
+        necessity: nextTransaction.necessity,
+        category: nextTransaction.category,
+        categoryId: nextTransaction.categoryId ?? "",
+        amount: Number(nextTransaction.amount),
+        note: nextTransaction.note,
+        sourceType: nextTransaction.sourceType,
+        recurringId: nextTransaction.recurringId ?? "",
+      });
+      await fetchTransactions();
+      setEditingTransaction(null);
+      setAmountKeyboardOpen(false);
+      setMessage("交易已儲存");
+    } catch {
+      setMessage("交易儲存失敗，請稍後再試");
+    } finally {
+      setIsSavingTransaction(false);
+    }
   }
 
   async function deleteTransaction(transaction: Transaction) {
+    if (deletingTransactionId) {
+      return;
+    }
+
     const message =
       transaction.sourceType === "recurring"
         ? `確定要刪除「${transaction.note}」嗎？這只會刪除此筆交易，不會刪除固定支出規則。`
@@ -373,8 +529,18 @@ export default function TransactionsPage() {
       return;
     }
 
-    await deleteSheetTransaction(transaction.id);
-    await fetchTransactions();
+    setDeletingTransactionId(transaction.id);
+    setMessage("");
+
+    try {
+      await deleteSheetTransaction(transaction.id);
+      await fetchTransactions();
+      setMessage("交易已刪除");
+    } catch {
+      setMessage("交易刪除失敗，請稍後再試");
+    } finally {
+      setDeletingTransactionId(null);
+    }
   }
 
   return (
@@ -392,13 +558,23 @@ export default function TransactionsPage() {
           </Link>
           <div className="text-center">
             <p className="text-sm font-medium text-slate-500">所有紀錄</p>
-            <h1 className="text-2xl font-semibold tracking-normal">交易列表</h1>
+            <h1 className="text-2xl font-semibold tracking-normal">
+              {pageTitle}
+            </h1>
           </div>
           <div className="h-11 w-11" />
         </header>
 
         {message ? (
-          <p className="rounded-[22px] bg-violet-50 px-4 py-3 text-sm font-medium text-violet-700">
+          <p
+            className={`rounded-[22px] px-4 py-3 text-sm font-medium ${
+              message.includes("失敗")
+                ? "bg-rose-50 text-rose-600"
+                : message.includes("已")
+                  ? "bg-emerald-50 text-emerald-600"
+                  : "bg-violet-50 text-violet-700"
+            }`}
+          >
             {message}
           </p>
         ) : null}
@@ -503,9 +679,10 @@ export default function TransactionsPage() {
                     <button
                       type="button"
                       onClick={() => deleteTransaction(item)}
-                      className="rounded-full bg-rose-50 px-3 py-1.5 text-sm font-medium text-rose-600 transition active:scale-[0.98]"
+                      disabled={deletingTransactionId !== null}
+                      className="rounded-full bg-rose-50 px-3 py-1.5 text-sm font-medium text-rose-600 transition active:scale-[0.98] disabled:bg-slate-100 disabled:text-slate-400"
                     >
-                      刪除
+                      {deletingTransactionId === item.id ? "刪除中..." : "刪除"}
                     </button>
                   </div>
                 </article>
@@ -665,15 +842,17 @@ export default function TransactionsPage() {
                   setEditingTransaction(null);
                   setAmountKeyboardOpen(false);
                 }}
-                className="h-13 rounded-full bg-slate-100 text-base font-semibold text-slate-600"
+                disabled={isSavingTransaction}
+                className="h-13 rounded-full bg-slate-100 text-base font-semibold text-slate-600 disabled:text-slate-400"
               >
                 取消
               </button>
               <button
                 type="submit"
-                className="h-13 rounded-full bg-slate-950 text-base font-semibold text-white shadow-lg shadow-slate-300/80"
+                disabled={isSavingTransaction}
+                className="h-13 rounded-full bg-slate-950 text-base font-semibold text-white shadow-lg shadow-slate-300/80 disabled:bg-slate-300 disabled:shadow-none"
               >
-                儲存
+                {isSavingTransaction ? "儲存中..." : "儲存"}
               </button>
             </div>
 

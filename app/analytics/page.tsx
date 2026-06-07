@@ -121,6 +121,14 @@ function isExpense(transaction: Transaction) {
   return transaction.type === "支出" || transaction.type === "expense";
 }
 
+function isRecurringIncome(transaction: Transaction) {
+  return isIncome(transaction) && transaction.sourceType === "recurring";
+}
+
+function isRecurringExpense(transaction: Transaction) {
+  return isExpense(transaction) && transaction.sourceType === "recurring";
+}
+
 function isFixedExpense(transaction: Transaction) {
   return (
     isExpense(transaction) &&
@@ -183,6 +191,21 @@ function calculateSummary(
     necessaryExpense,
     nonNecessaryExpense: expense - necessaryExpense,
     savingsRate: income > 0 ? ((income - expense) / income) * 100 : 0,
+  };
+}
+
+function calculateFixedCashFlow(sourceTransactions: Transaction[]) {
+  const fixedIncome = sourceTransactions
+    .filter(isRecurringIncome)
+    .reduce((sum, transaction) => sum + Number(transaction.amount), 0);
+  const fixedExpense = sourceTransactions
+    .filter(isRecurringExpense)
+    .reduce((sum, transaction) => sum + Number(transaction.amount), 0);
+
+  return {
+    fixedIncome,
+    fixedExpense,
+    fixedNet: fixedIncome - fixedExpense,
   };
 }
 
@@ -580,6 +603,7 @@ export default function AnalyticsPage() {
     activePeriod,
   );
   const summary = calculateSummary(filteredTransactions, categories);
+  const fixedCashFlow = calculateFixedCashFlow(filteredTransactions);
   const expenseCategories = groupByCategory(
     filteredTransactions,
     categories.filter((category) => category.type === "expense"),
@@ -673,6 +697,46 @@ export default function AnalyticsPage() {
               </p>
             </article>
           ))}
+        </section>
+
+        <section className="rounded-[32px] border border-white/75 bg-white/80 p-5 shadow-sm shadow-slate-200/80 backdrop-blur-xl sm:p-6">
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <p className="text-sm font-medium text-slate-500">
+                固定現金流分析
+              </p>
+              <h2 className="mt-1 text-xl font-semibold tracking-normal">
+                {activePeriod}固定收支
+              </h2>
+            </div>
+          </div>
+
+          <div className="mt-5 grid gap-3 sm:grid-cols-3">
+            <article className="rounded-[24px] bg-emerald-50/80 p-4">
+              <p className="text-sm font-medium text-emerald-700">固定收入</p>
+              <p className="mt-2 text-xl font-semibold tracking-normal text-emerald-600">
+                {formatMoney(fixedCashFlow.fixedIncome)}
+              </p>
+            </article>
+            <article className="rounded-[24px] bg-rose-50/80 p-4">
+              <p className="text-sm font-medium text-rose-700">固定支出</p>
+              <p className="mt-2 text-xl font-semibold tracking-normal text-rose-600">
+                {formatMoney(fixedCashFlow.fixedExpense)}
+              </p>
+            </article>
+            <article className="rounded-[24px] bg-slate-50/80 p-4">
+              <p className="text-sm font-medium text-slate-500">固定淨流</p>
+              <p
+                className={`mt-2 text-xl font-semibold tracking-normal ${
+                  fixedCashFlow.fixedNet >= 0
+                    ? "text-emerald-600"
+                    : "text-rose-600"
+                }`}
+              >
+                {formatMoney(fixedCashFlow.fixedNet)}
+              </p>
+            </article>
+          </div>
         </section>
 
         <section className="grid gap-4 lg:grid-cols-2">

@@ -155,6 +155,11 @@ export default function CategoriesPage() {
     null,
   );
   const [message, setMessage] = useState("");
+  const [messageTone, setMessageTone] = useState<"success" | "error">("error");
+  const [isSavingCategory, setIsSavingCategory] = useState(false);
+  const [deletingCategoryId, setDeletingCategoryId] = useState<string | null>(
+    null,
+  );
   const [activeTab, setActiveTab] = useState<CategoryType>("expense");
   const expenseCategories = categories.filter(
     (category) => category.type === "expense",
@@ -171,18 +176,20 @@ export default function CategoriesPage() {
 
   function openCreateForm() {
     setMessage("");
+    setMessageTone("error");
     setEditingCategory(emptyForm);
   }
 
   function openEditForm(category: Category) {
     setMessage("");
+    setMessageTone("error");
     setEditingCategory(category);
   }
 
   async function saveCategory(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
-    if (!editingCategory || !editingCategory.name.trim()) {
+    if (!editingCategory || !editingCategory.name.trim() || isSavingCategory) {
       return;
     }
 
@@ -191,24 +198,32 @@ export default function CategoriesPage() {
       name: editingCategory.name.trim(),
     };
 
-    if (editingCategory.id) {
-      updateCategory(nextCategory as Category);
-    } else {
-      try {
-        await addCategory(nextCategory);
-      } catch (error) {
-        setMessage(
-          error instanceof Error ? error.message : "此分類已存在",
-        );
-        return;
-      }
-    }
-
+    setIsSavingCategory(true);
     setMessage("");
-    setEditingCategory(null);
+
+    try {
+      if (editingCategory.id) {
+        await updateCategory(nextCategory as Category);
+      } else {
+        await addCategory(nextCategory);
+      }
+
+      setMessageTone("success");
+      setMessage("分類已儲存");
+      setEditingCategory(null);
+    } catch (error) {
+      setMessageTone("error");
+      setMessage(error instanceof Error ? error.message : "分類儲存失敗");
+    } finally {
+      setIsSavingCategory(false);
+    }
   }
 
-  function handleDelete(category: Category) {
+  async function handleDelete(category: Category) {
+    if (deletingCategoryId) {
+      return;
+    }
+
     const isUsed = transactions.some(
       (transaction) =>
         transaction.categoryId === category.id ||
@@ -216,12 +231,30 @@ export default function CategoriesPage() {
     );
 
     if (isUsed) {
+      setMessageTone("error");
       setMessage("已有交易使用此分類");
       return;
     }
 
-    deleteCategory(category.id);
+    const confirmed = window.confirm(`確定要刪除「${category.name}」嗎？`);
+
+    if (!confirmed) {
+      return;
+    }
+
+    setDeletingCategoryId(category.id);
     setMessage("");
+
+    try {
+      await deleteCategory(category.id);
+      setMessageTone("success");
+      setMessage("分類已刪除");
+    } catch {
+      setMessageTone("error");
+      setMessage("分類刪除失敗");
+    } finally {
+      setDeletingCategoryId(null);
+    }
   }
 
   return (
@@ -252,7 +285,13 @@ export default function CategoriesPage() {
         </header>
 
         {message ? (
-          <p className="rounded-[22px] bg-rose-50 px-4 py-3 text-sm font-medium text-rose-600">
+          <p
+            className={`rounded-[22px] px-4 py-3 text-sm font-medium ${
+              messageTone === "success"
+                ? "bg-emerald-50 text-emerald-600"
+                : "bg-rose-50 text-rose-600"
+            }`}
+          >
             {message}
           </p>
         ) : null}
@@ -336,9 +375,10 @@ export default function CategoriesPage() {
                   <button
                     type="button"
                     onClick={() => handleDelete(category)}
-                    className="rounded-full bg-rose-50 px-3 py-1.5 text-sm font-medium text-rose-600"
+                    disabled={deletingCategoryId !== null}
+                    className="rounded-full bg-rose-50 px-3 py-1.5 text-sm font-medium text-rose-600 disabled:bg-slate-100 disabled:text-slate-400"
                   >
-                    刪除
+                    {deletingCategoryId === category.id ? "刪除中..." : "刪除"}
                   </button>
                 </div>
               </article>
@@ -493,15 +533,17 @@ export default function CategoriesPage() {
               <button
                 type="button"
                 onClick={() => setEditingCategory(null)}
-                className="h-13 rounded-full bg-slate-100 text-base font-semibold text-slate-600"
+                disabled={isSavingCategory}
+                className="h-13 rounded-full bg-slate-100 text-base font-semibold text-slate-600 disabled:text-slate-400"
               >
                 取消
               </button>
               <button
                 type="submit"
-                className="h-13 rounded-full bg-slate-950 text-base font-semibold text-white shadow-lg shadow-slate-300/80"
+                disabled={isSavingCategory}
+                className="h-13 rounded-full bg-slate-950 text-base font-semibold text-white shadow-lg shadow-slate-300/80 disabled:bg-slate-300 disabled:shadow-none"
               >
-                儲存
+                {isSavingCategory ? "儲存中..." : "儲存"}
               </button>
             </div>
           </form>
