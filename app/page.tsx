@@ -17,33 +17,33 @@ const kpis = [
     label: "收入",
     cumulativeLabel: "累積收入",
     key: "income",
-    accent: "from-sky-300 to-blue-500",
-    tone: "bg-sky-50 text-sky-700",
-    icon: "↗",
+    accent: "from-emerald-200 to-teal-500",
+    tone: "bg-emerald-50 text-emerald-600",
+    icon: "income",
   },
   {
     label: "支出",
     cumulativeLabel: "累積支出",
     key: "expense",
-    accent: "from-rose-300 to-pink-500",
-    tone: "bg-rose-50 text-rose-700",
-    icon: "↘",
+    accent: "from-orange-200 to-rose-500",
+    tone: "bg-orange-50 text-orange-600",
+    icon: "expense",
   },
   {
     label: "結餘",
     cumulativeLabel: "目前餘額",
     key: "balance",
     accent: "from-emerald-300 to-teal-500",
-    tone: "bg-emerald-50 text-emerald-700",
-    icon: "✓",
+    tone: "bg-teal-50 text-teal-600",
+    icon: "balance",
   },
   {
     label: "固定支出",
     cumulativeLabel: "固定支出",
     key: "fixedExpense",
     accent: "from-violet-300 to-indigo-500",
-    tone: "bg-violet-50 text-violet-700",
-    icon: "⟳",
+    tone: "bg-violet-50 text-violet-600",
+    icon: "recurring",
   },
 ] as const;
 
@@ -406,6 +406,105 @@ function RepeatIcon() {
   );
 }
 
+function KpiIcon({ type }: { type: (typeof kpis)[number]["icon"] }) {
+  if (type === "income") {
+    return (
+      <svg
+        aria-hidden="true"
+        className="h-5 w-5"
+        fill="none"
+        viewBox="0 0 24 24"
+        stroke="currentColor"
+        strokeWidth="1.8"
+      >
+        <path
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          d="M5 17.5 15.5 7M9 7h6.5v6.5"
+        />
+        <path
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          d="M4.5 19.5h15"
+          opacity="0.45"
+        />
+      </svg>
+    );
+  }
+
+  if (type === "expense") {
+    return (
+      <svg
+        aria-hidden="true"
+        className="h-5 w-5"
+        fill="none"
+        viewBox="0 0 24 24"
+        stroke="currentColor"
+        strokeWidth="1.8"
+      >
+        <path
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          d="M5 6.5 15.5 17M9 17h6.5v-6.5"
+        />
+        <path
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          d="M4.5 4.5h15"
+          opacity="0.45"
+        />
+      </svg>
+    );
+  }
+
+  if (type === "balance") {
+    return (
+      <svg
+        aria-hidden="true"
+        className="h-5 w-5"
+        fill="none"
+        viewBox="0 0 24 24"
+        stroke="currentColor"
+        strokeWidth="1.8"
+      >
+        <path
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          d="M5 12.5 9.5 17 19 7"
+        />
+        <path
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          d="M4.5 20h15"
+          opacity="0.45"
+        />
+      </svg>
+    );
+  }
+
+  return (
+    <svg
+      aria-hidden="true"
+      className="h-5 w-5"
+      fill="none"
+      viewBox="0 0 24 24"
+      stroke="currentColor"
+      strokeWidth="1.8"
+    >
+      <path
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        d="M17 4.5 20 7.5 17 10.5M4 11V9.5a2 2 0 0 1 2-2h14"
+      />
+      <path
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        d="M7 19.5 4 16.5 7 13.5M20 13v1.5a2 2 0 0 1-2 2H4"
+      />
+    </svg>
+  );
+}
+
 export default function Home() {
   const { categories: contextCategories } = useCategories();
   const [sourceTransactions, setSourceTransactions] = useState<Transaction[]>(
@@ -583,7 +682,7 @@ export default function Home() {
                   <span
                     className={`grid h-9 w-9 place-items-center rounded-2xl text-sm font-semibold ${item.tone}`}
                   >
-                    {item.icon}
+                    <KpiIcon type={item.icon} />
                   </span>
                   <span
                     className={`h-2 w-10 rounded-full bg-gradient-to-r ${item.accent}`}
@@ -691,7 +790,7 @@ export default function Home() {
                 </h2>
               </div>
               <Link
-                href="/transactions"
+                href={`/transactions?period=${periodToQueryValue(activePeriod)}`}
                 className="rounded-full bg-slate-100 px-4 py-2 text-sm font-medium text-slate-600 transition hover:bg-slate-200"
               >
                 查看全部

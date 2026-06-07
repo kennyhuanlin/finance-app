@@ -164,6 +164,18 @@ function normalizePeriodFilter(value: string | null): NormalizedPeriod {
   return "all";
 }
 
+function formatPeriodFilterLabel(period: NormalizedPeriod) {
+  const labels: Record<NormalizedPeriod, string> = {
+    thisMonth: "本月",
+    lastMonth: "上月",
+    quarter: "本季",
+    year: "今年",
+    all: "累積餘額",
+  };
+
+  return labels[period];
+}
+
 function getInitialSearchParam(name: string) {
   if (typeof window === "undefined") {
     return null;
@@ -350,6 +362,8 @@ export default function TransactionsPage() {
       : typeFilter === "expense"
         ? "支出明細"
         : "全部交易";
+  const periodLabel = formatPeriodFilterLabel(periodFilter);
+  const showTypeSummary = typeFilter !== "all";
   const visibleTransactions = useMemo(
     () => filteredTransactions.slice(0, visibleCount),
     [filteredTransactions, visibleCount],
@@ -557,7 +571,9 @@ export default function TransactionsPage() {
             <BackIcon />
           </Link>
           <div className="text-center">
-            <p className="text-sm font-medium text-slate-500">所有紀錄</p>
+            <p className="text-sm font-medium text-slate-500">
+              目前區間：{periodLabel}
+            </p>
             <h1 className="text-2xl font-semibold tracking-normal">
               {pageTitle}
             </h1>
@@ -579,20 +595,22 @@ export default function TransactionsPage() {
           </p>
         ) : null}
 
-        <section className="grid grid-cols-2 gap-3">
-          <article className="rounded-[28px] border border-white/75 bg-white/80 p-4 shadow-sm shadow-slate-200/80 backdrop-blur-xl">
-            <p className="text-sm font-medium text-slate-500">收入</p>
-            <p className="mt-2 text-xl font-semibold text-emerald-600">
-              {formatMoney(incomeTotal)}
-            </p>
-          </article>
-          <article className="rounded-[28px] border border-white/75 bg-white/80 p-4 shadow-sm shadow-slate-200/80 backdrop-blur-xl">
-            <p className="text-sm font-medium text-slate-500">支出</p>
-            <p className="mt-2 text-xl font-semibold text-rose-600">
-              {formatMoney(expenseTotal)}
-            </p>
-          </article>
-        </section>
+        {showTypeSummary ? (
+          <section className="grid grid-cols-2 gap-3">
+            <article className="rounded-[28px] border border-white/75 bg-white/80 p-4 shadow-sm shadow-slate-200/80 backdrop-blur-xl">
+              <p className="text-sm font-medium text-slate-500">收入</p>
+              <p className="mt-2 text-xl font-semibold text-emerald-600">
+                {formatMoney(incomeTotal)}
+              </p>
+            </article>
+            <article className="rounded-[28px] border border-white/75 bg-white/80 p-4 shadow-sm shadow-slate-200/80 backdrop-blur-xl">
+              <p className="text-sm font-medium text-slate-500">支出</p>
+              <p className="mt-2 text-xl font-semibold text-rose-600">
+                {formatMoney(expenseTotal)}
+              </p>
+            </article>
+          </section>
+        ) : null}
 
         <section className="rounded-[32px] border border-white/75 bg-white/80 p-5 shadow-sm shadow-slate-200/80 backdrop-blur-xl">
           <div className="flex items-center justify-between gap-4">
