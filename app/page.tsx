@@ -679,18 +679,29 @@ export default function Home() {
         ) : null}
 
         <section className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-          {kpis.map((item) => {
-            const card = (
-              <article className="h-full rounded-[28px] border border-white/75 bg-white/80 p-4 shadow-sm shadow-slate-200/80 backdrop-blur-xl transition sm:p-5">
+          {kpis.map((item) => (
+            <article
+              key={item.key}
+              className="h-full rounded-[28px] border border-white/75 bg-white/80 p-4 shadow-sm shadow-slate-200/80 backdrop-blur-xl transition sm:p-5"
+            >
                 <div className="mb-4 flex items-center justify-between gap-3">
                   <span
                     className={`grid h-9 w-9 place-items-center rounded-2xl text-sm font-semibold ${item.tone}`}
                   >
                     <KpiIcon type={item.icon} />
                   </span>
-                  <span
-                    className={`h-2 w-10 rounded-full bg-gradient-to-r ${item.accent}`}
-                  />
+                  {item.key === "income" || item.key === "expense" ? (
+                    <Link
+                      href={`/transactions?type=${item.key}&period=${periodToQueryValue(activePeriod)}`}
+                      className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-600 transition hover:bg-white hover:text-slate-950 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                    >
+                      查看
+                    </Link>
+                  ) : (
+                    <span
+                      className={`h-2 w-10 rounded-full bg-gradient-to-r ${item.accent}`}
+                    />
+                  )}
                 </div>
                 <p className="text-sm font-medium text-slate-500">
                   {isCumulative ? item.cumulativeLabel : item.label}
@@ -700,23 +711,8 @@ export default function Home() {
                     ? "Loading..."
                     : formatMoney(activeSummary[item.key])}
                 </p>
-              </article>
-            );
-
-            if (item.key === "income" || item.key === "expense") {
-              return (
-                <Link
-                  key={item.key}
-                  href={`/transactions?type=${item.key}&period=${periodToQueryValue(activePeriod)}`}
-                  className="block rounded-[28px] transition hover:-translate-y-0.5 focus:outline-none focus:ring-2 focus:ring-slate-300"
-                >
-                  {card}
-                </Link>
-              );
-            }
-
-            return <div key={item.key}>{card}</div>;
-          })}
+            </article>
+          ))}
         </section>
 
         <section className="grid gap-4 lg:grid-cols-[0.95fr_1.05fr]">
