@@ -41,7 +41,7 @@ type RuleForm = Omit<RecurringRule, "id" | "amount"> & {
 const typeOptions = ["支出", "收入"];
 const natureOptions = ["固定扣款", "分期付款", "家庭支出", "訂閱服務"];
 const necessityOptions = ["必要", "重要", "可調整", "可取消"];
-const frequencyOptions = ["daily", "weekly", "monthly", "yearly"];
+const frequencyOptions = ["daily", "weekly", "monthly", "quarterly", "yearly"];
 const calculatorKeys = ["1", "2", "3", "4", "5", "6", "7", "8", "9", ".", "0"];
 
 const emptyForm: RuleForm = {
@@ -85,6 +85,7 @@ function formatFrequency(value: string) {
     daily: "每日",
     weekly: "每週",
     monthly: "每月",
+    quarterly: "每季",
     yearly: "每年",
   };
 
@@ -130,6 +131,44 @@ function isValidRemainingCount(value: string) {
   return Number.isInteger(count) && count >= 0;
 }
 
+function hasExpiredEndDate(rule: { endDate: string }) {
+  return Boolean(rule.endDate) && rule.endDate < todayString();
+}
+
+function hasNoRemainingCount(rule: { remainingCount: string }) {
+  return (
+    rule.remainingCount.trim().length > 0 && Number(rule.remainingCount) === 0
+  );
+}
+
+function isActiveRule(rule: RecurringRule) {
+  return (
+    rule.status === "active" &&
+    !hasExpiredEndDate(rule) &&
+    !hasNoRemainingCount(rule)
+  );
+}
+
+function getMonthlyAmount(rule: RecurringRule) {
+  if (rule.frequency === "daily") {
+    return (rule.amount * 365) / 12;
+  }
+
+  if (rule.frequency === "weekly") {
+    return (rule.amount * 52) / 12;
+  }
+
+  if (rule.frequency === "quarterly") {
+    return rule.amount / 3;
+  }
+
+  if (rule.frequency === "yearly") {
+    return rule.amount / 12;
+  }
+
+  return rule.amount;
+}
+
 function addPeriod(date: string, frequency: string) {
   if (!date) {
     return "";
@@ -142,6 +181,8 @@ function addPeriod(date: string, frequency: string) {
     nextDate.setDate(nextDate.getDate() + 1);
   } else if (frequency === "weekly") {
     nextDate.setDate(nextDate.getDate() + 7);
+  } else if (frequency === "quarterly") {
+    nextDate.setMonth(nextDate.getMonth() + 3);
   } else if (frequency === "yearly") {
     nextDate.setFullYear(nextDate.getFullYear() + 1);
   } else {
@@ -361,16 +402,21 @@ export default function RecurringPage() {
     editingRule?.type === "收入" || editingRule?.type === "income"
       ? incomeCategories
       : expenseCategories;
-  const enabledCount = visibleRules.filter(
-    (rule) => rule.status === "active",
-  ).length;
-  const monthlyTotal = useMemo(
+  const monthlyExpenseTotal = useMemo(
     () =>
-      visibleRules
-        .filter((rule) => rule.status === "active")
-        .reduce((sum, rule) => sum + rule.amount, 0),
-    [visibleRules],
+      rules
+        .filter((rule) => isExpenseRule(rule) && isActiveRule(rule))
+        .reduce((sum, rule) => sum + getMonthlyAmount(rule), 0),
+    [rules],
   );
+  const monthlyIncomeTotal = useMemo(
+    () =>
+      rules
+        .filter((rule) => isIncomeRule(rule) && isActiveRule(rule))
+        .reduce((sum, rule) => sum + getMonthlyAmount(rule), 0),
+    [rules],
+  );
+  const monthlyNetFlow = monthlyIncomeTotal - monthlyExpenseTotal;
 
   function toggleRule(id: string) {
     setRules((current) =>
@@ -712,23 +758,29 @@ export default function RecurringPage() {
           ))}
         </div>
 
-        <section className="grid grid-cols-2 gap-3">
+        <section className="grid gap-3 sm:grid-cols-3">
           <article className="rounded-[28px] border border-white/75 bg-white/80 p-4 shadow-sm shadow-slate-200/80 backdrop-blur-xl">
-            <p className="text-sm font-medium text-slate-500">
-              {activeTab === "expense" ? "每月固定支出" : "每月固定收入"}
-            </p>
-            <p
-              className={`mt-2 text-xl font-semibold ${
-                activeTab === "expense" ? "text-rose-600" : "text-emerald-600"
-              }`}
-            >
-              {formatMoney(monthlyTotal)}
+            <p className="text-sm font-medium text-slate-500">每月固定支出</p>
+            <p className="mt-2 text-xl font-semibold text-rose-600">
+              {formatMoney(monthlyExpenseTotal)}
             </p>
           </article>
           <article className="rounded-[28px] border border-white/75 bg-white/80 p-4 shadow-sm shadow-slate-200/80 backdrop-blur-xl">
-            <p className="text-sm font-medium text-slate-500">啟用規則</p>
-            <p className="mt-2 text-xl font-semibold text-violet-700">
-              {enabledCount} / {visibleRules.length}
+            <p className="text-sm font-medium text-slate-500">每月固定收入</p>
+            <p className="mt-2 text-xl font-semibold text-emerald-600">
+              {formatMoney(monthlyIncomeTotal)}
+            </p>
+          </article>
+          <article className="rounded-[28px] border border-white/75 bg-white/80 p-4 shadow-sm shadow-slate-200/80 backdrop-blur-xl">
+            <p className="text-sm font-medium text-slate-500">
+              每月固定淨現金流
+            </p>
+            <p
+              className={`mt-2 text-xl font-semibold ${
+                monthlyNetFlow >= 0 ? "text-emerald-600" : "text-rose-600"
+              }`}
+            >
+              {formatMoney(monthlyNetFlow)}
             </p>
           </article>
         </section>
