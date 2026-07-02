@@ -92,6 +92,18 @@ function formatFrequency(value: string) {
   return labels[value] ?? value;
 }
 
+function formatFrequencyUnit(value: string) {
+  const labels: Record<string, string> = {
+    daily: "日",
+    weekly: "週",
+    monthly: "月",
+    quarterly: "季",
+    yearly: "年",
+  };
+
+  return labels[value] ?? value;
+}
+
 function formatAmountDisplay(value: string) {
   if (!value) {
     return "0";
@@ -859,10 +871,14 @@ export default function RecurringPage() {
                         ruleIsIncome ? "text-emerald-600" : "text-rose-600"
                       }`}
                     >
-                      {formatMoney(rule.amount)}
+                      原始金額 {formatMoney(rule.amount)} /{" "}
+                      {formatFrequencyUnit(rule.frequency)}
                     </p>
                     <p className="mt-1 text-xs font-medium text-slate-400">
                       {formatFrequency(rule.frequency)}
+                    </p>
+                    <p className="mt-1 text-xs font-medium text-slate-500">
+                      月化金額 {formatMoney(getMonthlyAmount(rule))}
                     </p>
                   </div>
                 </div>
