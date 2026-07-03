@@ -68,6 +68,7 @@ function account(row: Record<string, unknown>): CashAccount {
     currency: currency(row.currency),
     balance: number(row.balance),
     note: String(row.note ?? ""),
+    createdAt: String(row.createdAt ?? ""),
     updatedAt: String(row.updatedAt ?? ""),
   };
 }

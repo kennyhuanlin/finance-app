@@ -200,6 +200,25 @@ async function googleRequest<T>(url: string, init?: RequestInit): Promise<T> {
   return (await response.json()) as T;
 }
 
+async function googleWriteRequest<T>(
+  url: string,
+  init: RequestInit,
+): Promise<T> {
+  const delays = [2000, 5000, 10000];
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      return await googleRequest<T>(url, init);
+    } catch (error) {
+      const shouldRetry =
+        error instanceof GoogleSheetsApiError &&
+        error.status === 429 &&
+        attempt < delays.length;
+      if (!shouldRetry) throw error;
+      await new Promise((resolve) => setTimeout(resolve, delays[attempt]));
+    }
+  }
+}
+
 async function getSheetMetadata(sheet: SupportedSheet) {
   const { spreadsheetId } = getConfig();
   const metadata = await googleRequest<{
@@ -222,7 +241,7 @@ async function createOrFindSheet(sheet: SupportedSheet) {
   const headers = sheetHeaders[sheet];
   const { spreadsheetId } = getConfig();
   try {
-    await googleRequest(
+    await googleWriteRequest(
       `${SHEETS_API}/${encodeURIComponent(spreadsheetId)}:batchUpdate`,
       {
         method: "POST",
@@ -313,7 +332,7 @@ async function writeValues(
   const startRow = Number(row);
   const endRow = startRow + Math.max(values.length, 1) - 1;
   const range = encodeURIComponent(`${sheet}!A${startRow}:Z${endRow}`);
-  return googleRequest(
+  return googleWriteRequest(
     `${SHEETS_API}/${encodeURIComponent(spreadsheetId)}/values/${range}?valueInputOption=RAW`,
     {
       method: "PUT",
@@ -498,7 +517,7 @@ export async function appendWorksheetRow(
 
   const { spreadsheetId } = getConfig();
   const range = encodeURIComponent(`${sheet}!A:Z`);
-  const result = await googleRequest(
+  const result = await googleWriteRequest(
     `${SHEETS_API}/${encodeURIComponent(spreadsheetId)}/values/${range}:append?valueInputOption=RAW&insertDataOption=INSERT_ROWS`,
     {
       method: "POST",
@@ -546,7 +565,7 @@ export async function deleteWorksheetRow(sheet: SupportedSheet, id: string) {
     throw new Error(`Worksheet "${sheet}" has no sheetId`);
   }
   const { spreadsheetId } = getConfig();
-  await googleRequest(
+  await googleWriteRequest(
     `${SHEETS_API}/${encodeURIComponent(spreadsheetId)}:batchUpdate`,
     {
       method: "POST",
@@ -580,9 +599,30 @@ export async function replaceWorksheetRows(
     throw new Error(`No managed headers are configured for "${sheet}"`);
   }
 
+  const currentValues = await getValues(sheet);
+  const currentRows = mapRows(currentValues).rows;
+  const ignoredComparisonHeaders = new Set(
+    ["investment_positions", "cash_accounts", "cash_ledger"].includes(sheet)
+      ? ["updatedAt"]
+      : [],
+  );
+  const comparisonHeaders = headers.filter(
+    (header) => !ignoredComparisonHeaders.has(header),
+  );
+  const canonicalRows = (rows: Record<string, unknown>[]) =>
+    rows.map((row) =>
+      comparisonHeaders.map((header) => normalizeCell(row[header])),
+    );
+  if (
+    JSON.stringify(canonicalRows(currentRows)) ===
+    JSON.stringify(canonicalRows(records))
+  ) {
+    return { ok: true, count: records.length, changed: false };
+  }
+
   const { spreadsheetId } = getConfig();
   const range = encodeURIComponent(`${sheet}!A:Z`);
-  await googleRequest(
+  await googleWriteRequest(
     `${SHEETS_API}/${encodeURIComponent(spreadsheetId)}/values/${range}:clear`,
     { method: "POST", body: "{}" },
   );
@@ -593,5 +633,5 @@ export async function replaceWorksheetRows(
     ),
   ]);
   invalidateWorksheetCache(sheet);
-  return { ok: true, count: records.length };
+  return { ok: true, count: records.length, changed: true };
 }

@@ -8,7 +8,22 @@ import {
   refreshInvestmentPositions,
 } from "../../../../lib/investmentSyncServer";
 
+let investmentSyncRunning = false;
+
 export async function POST() {
+  if (investmentSyncRunning) {
+    return NextResponse.json(
+      {
+        error: "investment sync already running",
+        message: "investment sync already running",
+        resource: "investments",
+        status: 409,
+      },
+      { status: 409 },
+    );
+  }
+
+  investmentSyncRunning = true;
   const resources = [
     "investment_trades",
     "investment_positions",
@@ -46,5 +61,7 @@ export async function POST() {
       { error: message, resource: "investments", status },
       { status },
     );
+  } finally {
+    investmentSyncRunning = false;
   }
 }

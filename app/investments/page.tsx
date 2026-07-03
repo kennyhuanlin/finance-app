@@ -651,6 +651,7 @@ export default function InvestmentsPage() {
 
   async function handleSyncInvestments() {
     if (isSyncing) return;
+    const startedAt = Date.now();
     setIsSyncing(true);
     setMessage("同步中...");
     try {
@@ -670,10 +671,14 @@ export default function InvestmentsPage() {
         message: errorMessage,
         error,
       });
-      setMessage(
-        `同步失敗 · ${resource} · status ${status || "unknown"} · ${errorMessage}`,
-      );
+      setMessage(status === 429
+        ? "Google Sheets 寫入額度暫時用完，請 1–3 分鐘後再試。"
+        : `同步失敗 · ${resource} · status ${status || "unknown"} · ${errorMessage}`);
     } finally {
+      const remainingCooldown = 3000 - (Date.now() - startedAt);
+      if (remainingCooldown > 0) {
+        await new Promise((resolve) => setTimeout(resolve, remainingCooldown));
+      }
       setIsSyncing(false);
     }
   }
