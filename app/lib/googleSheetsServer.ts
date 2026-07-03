@@ -7,43 +7,64 @@ const TOKEN_URL = "https://oauth2.googleapis.com/token";
 const SHEETS_API = "https://sheets.googleapis.com/v4/spreadsheets";
 
 export const sheetHeaders = {
+  transactions: [
+    "id", "date", "type", "category", "amount", "note", "createdAt",
+    "updatedAt", "expenseType", "necessity", "categoryId", "sourceType",
+    "recurringId",
+  ],
+  categories: [
+    "id", "name", "type", "color", "icon", "sortOrder", "isActive",
+    "createdAt", "updatedAt", "emoji",
+  ],
+  recurring: [
+    "id", "name", "type", "category", "amount", "frequency", "startDate",
+    "endDate", "nextDate", "remainingCount", "isActive", "note", "createdAt",
+    "updatedAt", "expenseType", "necessity", "nextRunDate", "enabled",
+    "lastRunDate", "categoryId", "nature",
+  ],
   investment_trades: [
-    "id", "date", "market", "ticker", "name", "side", "quantity", "price",
-    "fee", "tax", "currency", "exchangeRate", "totalAmount", "note",
-    "createdAt", "updatedAt",
+    "id", "tradeDate", "market", "broker", "account", "symbol", "name",
+    "side", "quantity", "price", "fee", "tax", "currency", "exchangeRate",
+    "amount", "note", "createdAt", "updatedAt", "date", "ticker",
+    "totalAmount",
   ],
   fx_records: [
     "id", "date", "fromCurrency", "toCurrency", "fromAmount", "toAmount",
     "exchangeRate", "fee", "note", "createdAt", "updatedAt",
   ],
   dividend_records: [
-    "id", "date", "market", "ticker", "name", "amount", "tax", "currency",
-    "exchangeRate", "amountTwd", "note", "createdAt", "updatedAt",
+    "id", "date", "market", "broker", "account", "symbol", "name", "currency",
+    "grossAmount", "tax", "fee", "netAmount", "exchangeRate", "note",
+    "createdAt", "updatedAt", "ticker", "amount", "amountTwd",
   ],
   investment_positions: [
-    "market", "ticker", "name", "quantity", "averageCost", "currency",
-    "totalCost", "updatedAt",
+    "id", "market", "broker", "account", "symbol", "name", "quantity",
+    "averageCost", "currency", "totalCost", "updatedAt", "ticker",
   ],
   cash_accounts: [
-    "id", "name", "currency", "balance", "note", "updatedAt",
+    "id", "account", "currency", "balance", "note", "createdAt", "updatedAt",
+    "name",
   ],
   cash_ledger: [
-    "id", "date", "accountId", "accountName", "currency", "type", "amount",
-    "relatedType", "relatedId", "note", "createdAt",
+    "id", "date", "account", "currency", "type", "amount", "sourceType",
+    "sourceId", "note", "createdAt", "updatedAt", "accountId", "accountName",
+    "relatedType", "relatedId",
   ],
 } as const;
 
-export type SupportedSheet =
-  | "transactions"
-  | "categories"
-  | "recurring_rules"
-  | keyof typeof sheetHeaders;
+export type SupportedSheet = keyof typeof sheetHeaders;
 
 type GoogleErrorBody = {
   error?: { code?: number; message?: string };
 };
 
 let cachedToken: { value: string; expiresAt: number } | null = null;
+const pendingSheetEnsures = new Map<SupportedSheet, Promise<SheetProperties>>();
+
+type SheetProperties = {
+  sheetId?: number;
+  title?: string;
+};
 
 export function hasServiceAccountConfig() {
   return Boolean(
@@ -156,7 +177,7 @@ function quotedSheetName(name: string) {
 async function getSheetMetadata(sheet: SupportedSheet) {
   const { spreadsheetId } = getConfig();
   const metadata = await googleRequest<{
-    sheets?: Array<{ properties?: { sheetId?: number; title?: string } }>;
+    sheets?: Array<{ properties?: SheetProperties }>;
   }>(
     `${SHEETS_API}/${encodeURIComponent(spreadsheetId)}?fields=sheets.properties`,
   );
@@ -165,26 +186,31 @@ async function getSheetMetadata(sheet: SupportedSheet) {
   )?.properties;
 }
 
-async function ensureSheet(sheet: SupportedSheet) {
+async function createOrFindSheet(sheet: SupportedSheet) {
   let properties = await getSheetMetadata(sheet);
   if (properties) {
     return properties;
   }
 
-  const headers = sheetHeaders[sheet as keyof typeof sheetHeaders];
-  if (!headers) {
-    throw new Error(
-      `Worksheet "${sheet}" does not exist. Create it and add its header row.`,
-    );
-  }
-
+  const headers = sheetHeaders[sheet];
   const { spreadsheetId } = getConfig();
-  await googleRequest(`${SHEETS_API}/${encodeURIComponent(spreadsheetId)}:batchUpdate`, {
-    method: "POST",
-    body: JSON.stringify({
-      requests: [{ addSheet: { properties: { title: sheet, frozenRowCount: 1 } } }],
-    }),
-  });
+  try {
+    await googleRequest(
+      `${SHEETS_API}/${encodeURIComponent(spreadsheetId)}:batchUpdate`,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          requests: [
+            { addSheet: { properties: { title: sheet, frozenRowCount: 1 } } },
+          ],
+        }),
+      },
+    );
+  } catch (error) {
+    if (!(error instanceof Error) || !error.message.includes("already exists")) {
+      throw error;
+    }
+  }
   properties = await getSheetMetadata(sheet);
   if (!properties) {
     throw new Error(`Failed to create worksheet "${sheet}"`);
@@ -194,8 +220,21 @@ async function ensureSheet(sheet: SupportedSheet) {
   return properties;
 }
 
+export async function ensureWorksheetExists(sheet: SupportedSheet) {
+  const existingRequest = pendingSheetEnsures.get(sheet);
+  if (existingRequest) return existingRequest;
+
+  const request = createOrFindSheet(sheet);
+  pendingSheetEnsures.set(sheet, request);
+  try {
+    return await request;
+  } finally {
+    pendingSheetEnsures.delete(sheet);
+  }
+}
+
 async function getValues(sheet: SupportedSheet) {
-  await ensureSheet(sheet);
+  await ensureWorksheetExists(sheet);
   const { spreadsheetId } = getConfig();
   const range = encodeURIComponent(quotedSheetName(sheet));
   const result = await googleRequest<{ values?: unknown[][] }>(
@@ -294,7 +333,7 @@ export async function deleteWorksheetRow(sheet: SupportedSheet, id: string) {
     throw new Error(`Record "${id}" was not found in "${sheet}"`);
   }
 
-  const properties = await ensureSheet(sheet);
+  const properties = await ensureWorksheetExists(sheet);
   if (properties.sheetId === undefined) {
     throw new Error(`Worksheet "${sheet}" has no sheetId`);
   }
@@ -324,7 +363,7 @@ export async function replaceWorksheetRows(
   sheet: SupportedSheet,
   records: Record<string, unknown>[],
 ) {
-  await ensureSheet(sheet);
+  await ensureWorksheetExists(sheet);
   const headers = Array.from(
     sheetHeaders[sheet as keyof typeof sheetHeaders] ?? [],
   );

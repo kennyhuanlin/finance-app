@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import {
   appendWorksheetRow,
   deleteWorksheetRow,
+  ensureWorksheetExists,
   hasServiceAccountConfig,
   readWorksheet,
   type SupportedSheet,
@@ -15,7 +16,7 @@ import {
 const resourceSheets = {
   transactions: "transactions",
   categories: "categories",
-  recurring: "recurring_rules",
+  recurring: "recurring",
   "investment-trades": "investment_trades",
   "fx-records": "fx_records",
   "dividend-records": "dividend_records",
@@ -29,7 +30,7 @@ type Context = { params: Promise<{ resource: string }> };
 const legacyFallbackSheets = new Set<SupportedSheet>([
   "transactions",
   "categories",
-  "recurring_rules",
+  "recurring",
 ]);
 
 function getSheet(resource: string) {
@@ -123,6 +124,7 @@ export async function GET(_request: NextRequest, context: Context) {
     if (shouldUseAppsScriptFallback(sheet)) {
       return appsScriptFallback("GET", sheet);
     }
+    await ensureWorksheetExists(sheet);
     return NextResponse.json(await readWorksheet(sheet));
   } catch (error) {
     return errorResponse(error);
@@ -137,6 +139,7 @@ export async function POST(request: NextRequest, context: Context) {
     if (shouldUseAppsScriptFallback(sheet)) {
       return appsScriptFallback("POST", sheet, body);
     }
+    await ensureWorksheetExists(sheet);
     if (sheet === "investment_positions") {
       const positions = await refreshInvestmentPositions();
       return NextResponse.json({ ok: true, positions });
@@ -174,6 +177,7 @@ export async function PUT(request: NextRequest, context: Context) {
     if (shouldUseAppsScriptFallback(sheet)) {
       return appsScriptFallback("PUT", sheet, body);
     }
+    await ensureWorksheetExists(sheet);
     const result = await updateWorksheetRow(sheet, id, body);
     const sync = await syncDerivedSheets(sheet);
     return NextResponse.json({ ...result, sync });
@@ -191,6 +195,7 @@ export async function DELETE(request: NextRequest, context: Context) {
     if (shouldUseAppsScriptFallback(sheet)) {
       return appsScriptFallback("DELETE", sheet, body);
     }
+    await ensureWorksheetExists(sheet);
     const result = await deleteWorksheetRow(sheet, id);
     const sync = await syncDerivedSheets(sheet);
     return NextResponse.json({ ...result, sync });
