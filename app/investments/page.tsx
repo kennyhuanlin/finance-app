@@ -16,6 +16,8 @@ import {
   getExchangeRateDisplay,
   getSymbolName,
   getTradeShareQuantity,
+  getTradeTotalAmount,
+  getTradeUnitPrice,
   type InvestmentTrade,
   type InvestmentPosition,
   type InvestmentTradeType,
@@ -502,7 +504,16 @@ export default function InvestmentsPage() {
       exchangeRate: isStockDividend ? 1 : number(tradeForm.exchangeRate),
       totalAmount: isStockDividend
         ? 0
-        : calculateTradeTotal(market, side, number(tradeForm.quantity), price, fee, tax),
+        : calculateTradeTotal(
+            market,
+            side,
+            number(tradeForm.quantity),
+            price,
+            fee,
+            tax,
+            tradeForm.unit,
+            tradeType,
+          ),
       id: tradeId, createdAt: tradeForm.createdAt || stamp, updatedAt: stamp,
     };
     try {
@@ -721,10 +732,16 @@ export default function InvestmentsPage() {
               item.price,
               item.fee,
               item.tax,
+              item.unit,
+              item.type,
             );
+            const totalAmount = getTradeTotalAmount(item);
+            const unitPrice = getTradeUnitPrice(item);
             const priceDetails = isStockDividendTrade(item)
               ? ""
-              : ` · 成交總金額：${formatInvestmentMoney(item.price, item.currency)} · 每股均價：${formatInvestmentMoney(shares > 0 ? item.price / shares : 0, item.currency)}`;
+              : item.market === "TW"
+                ? ` · 成交價：${formatInvestmentMoney(unitPrice, item.currency)} · 原幣成交金額：${formatInvestmentMoney(totalAmount, item.currency)}`
+                : ` · 每股均價：${formatInvestmentMoney(unitPrice, item.currency)} · 原幣成交金額：${formatInvestmentMoney(totalAmount, item.currency)}`;
             return <RecordRow key={item.id} title={`${item.symbol} ${item.name}`} meta={`${item.date} · ${item.market} · ${formatInvestmentTradeType(item.type,item.side)} · ${item.quantity} ${isStockDividendTrade(item) || item.unit === "share" || item.unit === "股" ? "股" : item.market === "TW" ? "張" : "股"}${priceDetails}`} amount={isStockDividendTrade(item) ? "不影響現金" : `${item.side === "buy" ? "-" : "+"}${formatInvestmentMoney(netAmount, item.currency)}`} onEdit={() => openTrade(item)} onDelete={() => remove("trade", item.id)} />;
           })}
         </RecordSection> : null}
@@ -782,9 +799,9 @@ export default function InvestmentsPage() {
             <Field label="股票代號"><input required type="text" inputMode={tradeForm.market === "TW" ? "numeric" : "text"} value={tradeForm.symbol} onBlur={finalizeTradeSymbol} onChange={(e) => updateTradeSymbol(e.target.value)}/></Field>
             <Field label="股票名稱"><input required value={tradeForm.name} onChange={(e) => setTradeForm({...tradeForm,name:e.target.value})}/></Field>
             <Field label="幣別"><select value={tradeForm.currency} onChange={(e) => setTradeForm({...tradeForm,currency:e.target.value as Currency})}><option value="TWD">TWD</option><option value="USD">USD</option></select></Field>
-            {(["quantity","price","fee","tax","exchangeRate"] as const).map((key) => <Field key={key} label={{quantity:tradeForm.market === "TW" ? "張數" : "股數",price:"成交總金額",fee:"手續費",tax:"交易稅",exchangeRate:"匯率"}[key]}><input required step="any" min="0" type="number" value={tradeForm[key]} onChange={(e) => setTradeForm({...tradeForm,[key]:e.target.value})}/></Field>)}
+            {(["quantity","price","fee","tax","exchangeRate"] as const).map((key) => <Field key={key} label={{quantity:tradeForm.market === "TW" ? "張數" : "股數",price:tradeForm.market === "TW" ? "每股成交價" : "成交總金額",fee:"手續費",tax:"交易稅",exchangeRate:"匯率"}[key]}><input required step="any" min="0" type="number" value={tradeForm[key]} onChange={(e) => setTradeForm({...tradeForm,[key]:e.target.value})}/></Field>)}
             <Field label="備註" wide><input value={tradeForm.note} onChange={(e) => setTradeForm({...tradeForm,note:e.target.value})}/></Field>
-            <p className="col-span-2 rounded-2xl bg-indigo-50 p-3 text-sm font-semibold text-indigo-700">總額：{formatInvestmentMoney(calculateTradeTotal(tradeForm.market,tradeForm.side,number(tradeForm.quantity),number(tradeForm.price),number(tradeForm.fee),number(tradeForm.tax)),tradeForm.currency)}</p>
+            <p className="col-span-2 rounded-2xl bg-indigo-50 p-3 text-sm font-semibold text-indigo-700">總額：{formatInvestmentMoney(calculateTradeTotal(tradeForm.market,tradeForm.side,number(tradeForm.quantity),number(tradeForm.price),number(tradeForm.fee),number(tradeForm.tax),tradeForm.unit,tradeForm.type),tradeForm.currency)}</p>
           </>}
           <Submit saving={saving}/>
         </form> : null}

@@ -1,6 +1,7 @@
 import "server-only";
 
 import {
+  calculateTradeTotal,
   calculatePositions,
   isStockDividendTrade,
   normalizeInvestmentTradeType,
@@ -208,11 +209,21 @@ export async function refreshCashAccounts() {
       tradeType === "fx"
     ) return;
     const target = findAccount(item.currency);
+    const totalAmount = calculateTradeTotal(
+      item.market,
+      item.side,
+      item.quantity,
+      item.price,
+      item.fee,
+      item.tax,
+      item.unit,
+      item.type,
+    );
     add(target, {
       id: `ledger-trade-${item.id}`,
       date: item.date,
       type: item.side === "buy" ? "trade_buy" : "trade_sell",
-      amount: item.totalAmount,
+      amount: totalAmount,
       relatedType: "investment_trade",
       relatedId: item.id,
       note: `${item.ticker} ${item.name} ${item.side === "buy" ? "買入" : "賣出"}`,

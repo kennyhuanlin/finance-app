@@ -144,16 +144,27 @@ export function getSymbolName(value: string, market?: Market) {
 }
 
 export function calculateTradeTotal(
-  _market: Market,
+  market: Market,
   side: TradeSide,
-  _quantity: number,
+  quantity: number,
   price: number,
   fee: number,
   tax: number,
+  unit?: string,
+  type?: string,
 ) {
+  const trade = {
+    market,
+    quantity,
+    price,
+    unit,
+    type,
+  };
+  if (isStockDividendTrade(trade)) return 0;
+  const totalAmount = getTradeTotalAmount(trade);
   return side === "buy"
-    ? price + fee + tax
-    : price - fee - tax;
+    ? totalAmount + fee + tax
+    : totalAmount - fee - tax;
 }
 
 export function isStockDividendTrade(trade: {
@@ -195,10 +206,37 @@ export function getTradeShareQuantity(trade: {
   type?: string;
 }) {
   const unit = String(trade.unit ?? "").trim().toLowerCase();
-  if (unit === "lot" || unit === "張") return trade.quantity * 1000;
-  if (unit === "share" || unit === "股") return trade.quantity;
-  if (isStockDividendTrade(trade)) return trade.quantity;
-  return trade.market === "TW" ? trade.quantity * 1000 : trade.quantity;
+  const isLot = unit === "lot" || unit === "張";
+  if (isStockDividendTrade(trade)) {
+    return isLot ? trade.quantity * 1000 : trade.quantity;
+  }
+  if (trade.market === "US") return trade.quantity;
+  return unit === "share" || unit === "股"
+    ? trade.quantity
+    : trade.quantity * 1000;
+}
+
+export function getTradeTotalAmount(trade: {
+  market: Market;
+  quantity: number;
+  unit?: string;
+  type?: string;
+  price: number;
+}) {
+  if (isStockDividendTrade(trade)) return 0;
+  if (trade.market === "US") return trade.price;
+  return getTradeShareQuantity(trade) * trade.price;
+}
+
+export function getTradeUnitPrice(trade: {
+  market: Market;
+  quantity: number;
+  unit?: string;
+  type?: string;
+  price: number;
+}) {
+  const shares = getTradeShareQuantity(trade);
+  return shares > 0 ? getTradeTotalAmount(trade) / shares : 0;
 }
 
 export function calculatePositions(
@@ -233,7 +271,7 @@ export function calculatePositions(
       current.averageCost =
         current.quantity > 0 ? current.totalCost / current.quantity : 0;
     } else if (trade.side === "buy") {
-      const addedCost = trade.price + trade.fee + trade.tax;
+      const addedCost = getTradeTotalAmount(trade) + trade.fee + trade.tax;
       const nextQuantity = current.quantity + quantity;
       current.totalCost += addedCost;
       current.quantity = nextQuantity;
