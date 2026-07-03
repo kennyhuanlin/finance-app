@@ -42,6 +42,17 @@ export type InvestmentPosition = {
   updatedAt: string;
 };
 
+export type InvestmentPrice = {
+  symbol: string;
+  market: Market;
+  name: string;
+  price: number;
+  currency: Currency;
+  price_date: string;
+  source: string;
+  updatedAt: string;
+};
+
 export type FxRecord = {
   id: string;
   date: string;
@@ -129,6 +140,9 @@ export const symbolNameMap: Record<string, string> = {
   "00878": "國泰永續高股息",
   "00919": "群益台灣精選高息",
   "00929": "復華台灣科技優息",
+  "2880": "華南金",
+  "6281": "全國電",
+  "6115": "鎰勝",
 };
 
 export function normalizeSymbol(value: string, market?: Market) {

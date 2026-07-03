@@ -259,6 +259,53 @@ export async function syncInvestments() {
   return body;
 }
 
+export async function getInvestmentPrices<T = Record<string, unknown>>() {
+  const response = await fetch("/api/google/investments/prices", {
+    method: "GET",
+    cache: "no-store",
+  });
+  const body = (await response.json().catch(() => null)) as {
+    data?: T[];
+    error?: string;
+  } | null;
+  if (!response.ok) {
+    throw new InvestmentSyncError(
+      "investment_prices",
+      response.status,
+      body?.error ?? "Investment prices read failed",
+    );
+  }
+  return body?.data ?? [];
+}
+
+export async function updateInvestmentPrices() {
+  const response = await fetch("/api/google/investments/prices", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+  });
+  const body = (await response.json().catch(() => null)) as {
+    error?: string;
+    resource?: string;
+    status?: number;
+    updatedCount?: number;
+    failedSymbols?: string[];
+    data?: Record<string, unknown>[];
+    prices?: Record<string, unknown>[];
+  } | null;
+  if (!response.ok) {
+    throw new InvestmentSyncError(
+      body?.resource ?? "investment_prices",
+      body?.status ?? response.status,
+      body?.error ?? "Investment price update failed",
+    );
+  }
+  return {
+    updatedCount: body?.updatedCount ?? 0,
+    failedSymbols: body?.failedSymbols ?? [],
+    prices: body?.prices ?? [],
+  };
+}
+
 export function getTransactions<T = Record<string, unknown>>() {
   return requestSheet<T>("transactions");
 }

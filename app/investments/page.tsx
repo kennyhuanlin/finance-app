@@ -15,10 +15,10 @@ import {
   formatInvestmentTradeType,
   getExchangeRateDisplay,
   getSymbolName,
-  getTradeShareQuantity,
   getTradeTotalAmount,
   getTradeUnitPrice,
   type InvestmentTrade,
+  type InvestmentPrice,
   type InvestmentPosition,
   type InvestmentTradeType,
   isStockDividendTrade,
@@ -39,9 +39,11 @@ import {
   deleteInvestmentTrade,
   deleteCashAccount,
   getInvestmentBundle,
+  getInvestmentPrices,
   InvestmentSyncError,
   SheetRequestError,
   syncInvestments,
+  updateInvestmentPrices,
   updateCashAccount,
   updateDividendRecord,
   updateFxRecord,
@@ -172,6 +174,19 @@ function normalizePosition(row: Record<string, unknown>): InvestmentPosition {
     updatedAt: String(row.updatedAt ?? ""),
   };
 }
+function normalizePrice(row: Record<string, unknown>): InvestmentPrice {
+  const market = row.market === "US" ? "US" : "TW";
+  return {
+    symbol: normalizeSymbol(String(row.symbol ?? ""), market),
+    market,
+    name: String(row.name ?? ""),
+    price: number(row.price),
+    currency: row.currency === "USD" ? "USD" : "TWD",
+    price_date: String(row.price_date ?? ""),
+    source: String(row.source ?? ""),
+    updatedAt: String(row.updatedAt ?? ""),
+  };
+}
 function normalizeAccount(row: Record<string, unknown>): CashAccount {
   return {
     id: String(row.id ?? ""), name: String(row.name ?? ""),
@@ -197,6 +212,7 @@ export default function InvestmentsPage() {
   const [tab, setTab] = useState<Tab>("overview");
   const [trades, setTrades] = useState<InvestmentTrade[]>([]);
   const [positionSnapshots, setPositionSnapshots] = useState<InvestmentPosition[]>([]);
+  const [prices, setPrices] = useState<InvestmentPrice[]>([]);
   const [fxRecords, setFxRecords] = useState<FxRecord[]>([]);
   const [dividends, setDividends] = useState<DividendRecord[]>([]);
   const [cashAccounts, setCashAccounts] = useState<CashAccount[]>([]);
@@ -212,6 +228,7 @@ export default function InvestmentsPage() {
   const [saving, setSaving] = useState(false);
   const [fxRateManual, setFxRateManual] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
+  const [isUpdatingPrices, setIsUpdatingPrices] = useState(false);
   const [fxRateDisplay, setFxRateDisplay] = useState("");
   const [resourceErrors, setResourceErrors] = useState<
     Partial<Record<InvestmentResource, ResourceErrorInfo>>
@@ -223,11 +240,18 @@ export default function InvestmentsPage() {
     if (isLoadingRef.current || (hasLoadedRef.current && !force)) return;
     isLoadingRef.current = true;
     try {
-      const bundle = await getInvestmentBundle(force);
+      const [bundle, priceRows] = await Promise.all([
+        getInvestmentBundle(force),
+        getInvestmentPrices().catch((error) => {
+          console.error("Investment prices read failed", error);
+          return [];
+        }),
+      ]);
       setTrades(bundle.data.investment_trades.map(normalizeTrade));
       setPositionSnapshots(
         bundle.data.investment_positions.map(normalizePosition),
       );
+      setPrices(priceRows.map(normalizePrice));
       setFxRecords(bundle.data.fx_records.map(normalizeFx));
       setDividends(bundle.data.dividend_records.map(normalizeDividend));
       setCashAccounts(bundle.data.cash_accounts.map(normalizeAccount));
@@ -683,6 +707,33 @@ export default function InvestmentsPage() {
     }
   }
 
+  async function handleUpdatePrices() {
+    if (isUpdatingPrices) return;
+    setIsUpdatingPrices(true);
+    setMessage("價格更新中...");
+    try {
+      const result = await updateInvestmentPrices();
+      setPrices(result.prices.map(normalizePrice));
+      setMessage(
+        result.failedSymbols.length
+          ? `價格已更新，${result.failedSymbols.length} 檔失敗：${result.failedSymbols.join("、")}`
+          : "價格已更新",
+      );
+    } catch (error) {
+      const status =
+        error instanceof InvestmentSyncError ? error.status : 0;
+      const reason =
+        error instanceof Error ? error.message : "未知錯誤";
+      setMessage(
+        status === 429
+          ? "價格更新失敗：Google Sheets 寫入額度暫時用完，請稍後再試。"
+          : `價格更新失敗：${reason}`,
+      );
+    } finally {
+      setIsUpdatingPrices(false);
+    }
+  }
+
   const card = "rounded-[28px] border border-white/80 bg-white/85 p-5 shadow-sm shadow-slate-200/80 backdrop-blur-xl";
   return (
     <main className="min-h-screen bg-[#f6f7fb] text-slate-950">
@@ -693,14 +744,24 @@ export default function InvestmentsPage() {
             <h1 className="mt-1 text-3xl font-semibold">投資記帳</h1>
             <p className="mt-2 text-sm text-slate-500">台股、美股、換匯與股息集中管理</p>
           </div>
-          <button
-            type="button"
-            onClick={handleSyncInvestments}
-            disabled={isSyncing}
-            className="rounded-full bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white shadow-lg shadow-indigo-100 disabled:bg-slate-300 disabled:shadow-none"
-          >
-            {isSyncing ? "同步中..." : "重新同步庫存"}
-          </button>
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={handleUpdatePrices}
+              disabled={isUpdatingPrices}
+              className="rounded-full bg-emerald-600 px-4 py-2.5 text-sm font-semibold text-white shadow-lg shadow-emerald-100 disabled:bg-slate-300 disabled:shadow-none"
+            >
+              {isUpdatingPrices ? "價格更新中..." : "更新即時價格"}
+            </button>
+            <button
+              type="button"
+              onClick={handleSyncInvestments}
+              disabled={isSyncing}
+              className="rounded-full bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white shadow-lg shadow-indigo-100 disabled:bg-slate-300 disabled:shadow-none"
+            >
+              {isSyncing ? "同步中..." : "重新同步庫存"}
+            </button>
+          </div>
         </header>
         {message ? <p className="rounded-2xl bg-indigo-50 px-4 py-3 text-sm font-medium text-indigo-700">{message}</p> : null}
         {tab === "overview" && Object.keys(resourceErrors).length ? (
@@ -729,7 +790,6 @@ export default function InvestmentsPage() {
 
         {tab === "trades" ? <RecordSection title="買賣紀錄" action={() => openTrade()} error={resourceErrors.investment_trades}>
           {trades.slice().sort((a,b) => b.date.localeCompare(a.date)).map((item) => {
-            const shares = getTradeShareQuantity(item);
             const netAmount = calculateTradeTotal(
               item.market,
               item.side,
@@ -752,7 +812,37 @@ export default function InvestmentsPage() {
         </RecordSection> : null}
 
         {tab === "positions" ? <section className={card}><h2 className="text-xl font-semibold">庫存持股</h2><ResourceError error={resourceErrors.investment_positions}/><div className="mt-3 divide-y divide-slate-100">
-          {positions.length ? positions.map((item) => <div key={`${item.market}-${item.ticker}`} className="grid gap-2 py-4 sm:grid-cols-[1fr_auto]"><div><p className="font-semibold">{item.ticker} <span className="font-normal text-slate-500">{item.name}</span></p><p className="mt-1 text-xs text-slate-400">{item.market} · {item.quantity} 股 · 均價 {formatInvestmentMoney(item.averageCost, item.currency)}</p></div><p className="font-semibold">{formatInvestmentMoney(item.totalCost, item.currency)}</p></div>) : <Empty />}
+          {positions.length ? positions.map((item) => {
+            const price = prices.find(
+              (candidate) =>
+                candidate.market === item.market &&
+                candidate.symbol === normalizeSymbol(item.ticker, item.market),
+            );
+            const latestPrice = price?.price ?? 0;
+            const marketValue = item.quantity * latestPrice;
+            const unrealizedGain = marketValue - item.totalCost;
+            const returnRate =
+              item.totalCost > 0 ? unrealizedGain / item.totalCost : 0;
+            return <div key={`${item.market}-${item.ticker}`} className="py-4">
+              <div className="flex flex-wrap items-baseline justify-between gap-2">
+                <p className="font-semibold">{item.ticker} <span className="font-normal text-slate-500">{item.name}</span></p>
+                <p className={`font-semibold ${price ? unrealizedGain >= 0 ? "text-emerald-600" : "text-rose-600" : "text-slate-400"}`}>
+                  {price ? `${unrealizedGain >= 0 ? "+" : ""}${formatInvestmentMoney(unrealizedGain, item.currency)}` : "尚無價格"}
+                </p>
+              </div>
+              <dl className="mt-3 grid grid-cols-2 gap-x-4 gap-y-3 text-sm sm:grid-cols-6">
+                {[
+                  ["持有股數", `${item.quantity} 股`],
+                  ["平均成本", formatInvestmentMoney(item.averageCost, item.currency, 2)],
+                  ["最新價格", price ? formatInvestmentMoney(latestPrice, item.currency, 2) : "—"],
+                  ["市值", price ? formatInvestmentMoney(marketValue, item.currency, 2) : "—"],
+                  ["未實現損益", price ? `${unrealizedGain >= 0 ? "+" : ""}${formatInvestmentMoney(unrealizedGain, item.currency, 2)}` : "—"],
+                  ["報酬率", price ? `${returnRate >= 0 ? "+" : ""}${(returnRate * 100).toFixed(2)}%` : "—"],
+                ].map(([label, value]) => <div key={label}><dt className="text-xs text-slate-400">{label}</dt><dd className="mt-1 font-medium">{value}</dd></div>)}
+              </dl>
+              {price ? <p className="mt-3 text-xs text-slate-400">Yahoo Finance · {price.price_date}</p> : null}
+            </div>;
+          }) : <Empty />}
         </div></section> : null}
 
         {tab === "cash" ? <section className="grid gap-4">

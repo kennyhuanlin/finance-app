@@ -41,6 +41,10 @@ export const sheetHeaders = {
     "id", "market", "broker", "account", "symbol", "name", "quantity",
     "averageCost", "currency", "totalCost", "updatedAt", "ticker",
   ],
+  investment_prices: [
+    "symbol", "market", "name", "price", "currency", "price_date",
+    "source", "updatedAt",
+  ],
   cash_accounts: [
     "id", "account", "currency", "balance", "note", "createdAt", "updatedAt",
     "name",
@@ -602,7 +606,7 @@ export async function replaceWorksheetRows(
   const currentValues = await getValues(sheet);
   const currentRows = mapRows(currentValues).rows;
   const ignoredComparisonHeaders = new Set(
-    ["investment_positions", "cash_accounts", "cash_ledger"].includes(sheet)
+    ["investment_positions", "investment_prices", "cash_accounts", "cash_ledger"].includes(sheet)
       ? ["updatedAt"]
       : [],
   );
