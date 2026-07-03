@@ -144,18 +144,16 @@ export function getSymbolName(value: string, market?: Market) {
 }
 
 export function calculateTradeTotal(
-  market: Market,
+  _market: Market,
   side: TradeSide,
-  quantity: number,
+  _quantity: number,
   price: number,
   fee: number,
   tax: number,
 ) {
-  const multiplier = market === "TW" ? 1000 : 1;
-  const subtotal = quantity * multiplier * price;
   return side === "buy"
-    ? subtotal + fee + tax
-    : subtotal - fee - tax;
+    ? price + fee + tax
+    : price - fee - tax;
 }
 
 export function isStockDividendTrade(trade: {
@@ -235,7 +233,7 @@ export function calculatePositions(
       current.averageCost =
         current.quantity > 0 ? current.totalCost / current.quantity : 0;
     } else if (trade.side === "buy") {
-      const addedCost = quantity * trade.price + trade.fee + trade.tax;
+      const addedCost = trade.price + trade.fee + trade.tax;
       const nextQuantity = current.quantity + quantity;
       current.totalCost += addedCost;
       current.quantity = nextQuantity;
