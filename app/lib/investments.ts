@@ -50,10 +50,16 @@ export type DividendRecord = {
   id: string;
   date: string;
   market: Market;
+  broker: string;
+  account: string;
+  symbol: string;
   ticker: string;
   name: string;
+  grossAmount: number;
   amount: number;
   tax: number;
+  fee: number;
+  netAmount: number;
   currency: Currency;
   exchangeRate: number;
   amountTwd: number;
@@ -68,6 +74,7 @@ export type CashAccount = {
   currency: Currency;
   balance: number;
   note: string;
+  createdAt?: string;
   updatedAt: string;
 };
 
@@ -93,7 +100,33 @@ export type CashLedger = {
   relatedId: string;
   note: string;
   createdAt: string;
+  account?: string;
+  sourceType?: string;
+  sourceId?: string;
+  updatedAt?: string;
 };
+
+export const symbolNameMap: Record<string, string> = {
+  VOO: "Vanguard S&P 500 ETF",
+  QQQM: "Invesco NASDAQ 100 ETF",
+  QQQ: "Invesco QQQ Trust",
+  VT: "Vanguard Total World Stock ETF",
+  VTI: "Vanguard Total Stock Market ETF",
+  SPY: "SPDR S&P 500 ETF Trust",
+  "0050": "元大台灣50",
+  "006208": "富邦台50",
+  "00878": "國泰永續高股息",
+  "00919": "群益台灣精選高息",
+  "00929": "復華台灣科技優息",
+};
+
+export function normalizeSymbol(value: string) {
+  return value.trim().toUpperCase();
+}
+
+export function getSymbolName(value: string) {
+  return symbolNameMap[normalizeSymbol(value)] ?? "";
+}
 
 export function calculateTradeTotal(
   side: TradeSide,

@@ -7,7 +7,6 @@ import {
   type CashLedger,
   type CashLedgerType,
   type Currency,
-  type DividendRecord,
   type FxRecord,
   type InvestmentTrade,
 } from "./investments";
@@ -19,6 +18,10 @@ import {
 function number(value: unknown) {
   const result = Number(value ?? 0);
   return Number.isFinite(result) ? result : 0;
+}
+
+function firstValue(...values: unknown[]) {
+  return values.find((value) => value !== "" && value !== null && value !== undefined);
 }
 
 function currency(value: unknown): Currency {
@@ -49,7 +52,7 @@ function trade(row: Record<string, unknown>): InvestmentTrade {
 function account(row: Record<string, unknown>): CashAccount {
   return {
     id: String(row.id ?? ""),
-    name: String(row.name ?? ""),
+    name: String(firstValue(row.account, row.name) ?? ""),
     currency: currency(row.currency),
     balance: number(row.balance),
     note: String(row.note ?? ""),
@@ -58,16 +61,26 @@ function account(row: Record<string, unknown>): CashAccount {
 }
 
 function ledger(row: Record<string, unknown>): CashLedger {
+  const sourceType = String(row.sourceType ?? "");
+  const relatedType =
+    String(row.relatedType ?? "") ||
+    (sourceType === "dividend"
+      ? "dividend_record"
+      : sourceType === "trade"
+        ? "investment_trade"
+        : sourceType === "fx"
+          ? "fx_record"
+          : sourceType);
   return {
     id: String(row.id ?? ""),
     date: normalizeDateOnly(row.date),
     accountId: String(row.accountId ?? ""),
-    accountName: String(row.accountName ?? ""),
+    accountName: String(firstValue(row.account, row.accountName) ?? ""),
     currency: currency(row.currency),
     type: String(row.type ?? "adjustment") as CashLedgerType,
     amount: number(row.amount),
-    relatedType: String(row.relatedType ?? ""),
-    relatedId: String(row.relatedId ?? ""),
+    relatedType,
+    relatedId: String(firstValue(row.sourceId, row.relatedId) ?? ""),
     note: String(row.note ?? ""),
     createdAt: String(row.createdAt ?? ""),
   };
@@ -99,13 +112,56 @@ export async function refreshCashAccounts() {
       readWorksheet("dividend_records"),
     ]);
   const accounts = accountRows.map(account);
+  const dividends = dividendRows.map((row) => {
+    const grossAmount = number(firstValue(row.grossAmount, row.amount));
+    const tax = number(row.tax);
+    const fee = number(row.fee);
+    return {
+      id: String(row.id ?? ""),
+      date: normalizeDateOnly(row.date),
+      account: String(row.account ?? "").trim(),
+      symbol: String(firstValue(row.symbol, row.ticker) ?? ""),
+      name: String(row.name ?? ""),
+      currency: currency(row.currency),
+      netAmount:
+        number(row.netAmount) || Math.max(0, grossAmount - tax - fee),
+      createdAt: String(row.createdAt ?? ""),
+    };
+  });
+  dividends.forEach((item) => {
+    const accountName = item.account || `${item.currency} 現金帳戶`;
+    if (
+      !accounts.some(
+        (candidate) =>
+          candidate.currency === item.currency && candidate.name === accountName,
+      )
+    ) {
+      const safeName =
+        accountName.replace(/[^a-zA-Z0-9\u4e00-\u9fff]+/g, "-") || "cash";
+      accounts.push({
+        id: `cash-${item.currency}-${safeName}`,
+        name: accountName,
+        currency: item.currency,
+        balance: 0,
+        note: "股息自動建立",
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      });
+    }
+  });
   const manualLedger = ledgerRows
     .map(ledger)
     .filter((item) => !generatedRelatedTypes.has(item.relatedType));
   const generated: CashLedger[] = [];
   const missingCurrencies = new Set<Currency>();
-  const findAccount = (target: Currency) => {
-    const found = accounts.find((item) => item.currency === target);
+  const findAccount = (target: Currency, preferredName = "") => {
+    const found =
+      accounts.find(
+        (item) =>
+          item.currency === target &&
+          preferredName !== "" &&
+          item.name === preferredName,
+      ) ?? accounts.find((item) => item.currency === target);
     if (!found) missingCurrencies.add(target);
     return found;
   };
@@ -118,7 +174,18 @@ export async function refreshCashAccounts() {
       ...data,
       accountId: target.id,
       accountName: target.name,
+      account: target.name,
       currency: target.currency,
+      sourceType:
+        data.relatedType === "dividend_record"
+          ? "dividend"
+          : data.relatedType === "investment_trade"
+            ? "trade"
+            : data.relatedType === "fx_record"
+              ? "fx"
+              : data.relatedType,
+      sourceId: data.relatedId,
+      updatedAt: new Date().toISOString(),
     });
   };
 
@@ -170,27 +237,15 @@ export async function refreshCashAccounts() {
       createdAt: item.createdAt,
     });
   });
-  dividendRows.forEach((row) => {
-    const item = {
-      id: String(row.id ?? ""),
-      date: normalizeDateOnly(row.date),
-      ticker: String(row.ticker ?? ""),
-      amount: number(row.amount),
-      tax: number(row.tax),
-      currency: currency(row.currency),
-      createdAt: String(row.createdAt ?? ""),
-    } satisfies Pick<
-      DividendRecord,
-      "id" | "date" | "ticker" | "amount" | "tax" | "currency" | "createdAt"
-    >;
-    add(findAccount(item.currency), {
+  dividends.forEach((item) => {
+    add(findAccount(item.currency, item.account), {
       id: `ledger-dividend-${item.id}`,
       date: item.date,
       type: "dividend",
-      amount: Math.max(0, item.amount - item.tax),
+      amount: item.netAmount,
       relatedType: "dividend_record",
       relatedId: item.id,
-      note: `${item.ticker} 股息`,
+      note: `股息：${item.symbol} ${item.name}`.trim(),
       createdAt: item.createdAt,
     });
   });
@@ -209,6 +264,7 @@ export async function refreshCashAccounts() {
   const now = new Date().toISOString();
   const nextAccounts = accounts.map((item) => ({
     ...item,
+    account: item.name,
     balance: allLedger
       .filter((entry) => entry.accountId === item.id)
       .reduce((sum, entry) => {

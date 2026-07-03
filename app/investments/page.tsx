@@ -11,10 +11,12 @@ import {
   type DividendRecord,
   type FxRecord,
   formatInvestmentMoney,
+  getSymbolName,
   type InvestmentTrade,
   type InvestmentPosition,
   localDateKey,
   type Market,
+  normalizeSymbol,
   type TradeSide,
 } from "../lib/investments";
 import {
@@ -54,8 +56,9 @@ type TradeForm = Omit<InvestmentTrade, "quantity" | "price" | "fee" | "tax" | "e
 type FxForm = Omit<FxRecord, "fromAmount" | "toAmount" | "exchangeRate" | "fee"> & {
   fromAmount: string; toAmount: string; exchangeRate: string; fee: string;
 };
-type DividendForm = Omit<DividendRecord, "amount" | "tax" | "exchangeRate" | "amountTwd"> & {
-  amount: string; tax: string; exchangeRate: string; amountTwd: string;
+type DividendForm = Omit<DividendRecord, "grossAmount" | "amount" | "tax" | "fee" | "netAmount" | "exchangeRate" | "amountTwd"> & {
+  grossAmount: string; amount: string; tax: string; fee: string;
+  netAmount: string; exchangeRate: string; amountTwd: string;
 };
 type AccountForm = {
   name: string; currency: Currency; balance: string; note: string;
@@ -76,9 +79,10 @@ const emptyFx = (): FxForm => ({
   createdAt: "", updatedAt: "",
 });
 const emptyDividend = (): DividendForm => ({
-  id: "", date: localDateKey(), market: "TW", ticker: "", name: "", amount: "",
-  tax: "0", currency: "TWD", exchangeRate: "1", amountTwd: "", note: "",
-  createdAt: "", updatedAt: "",
+  id: "", date: localDateKey(), market: "TW", broker: "", account: "",
+  symbol: "", ticker: "", name: "", grossAmount: "", amount: "", tax: "0",
+  fee: "0", netAmount: "", currency: "TWD", exchangeRate: "1",
+  amountTwd: "", note: "", createdAt: "", updatedAt: "",
 });
 const emptyAccount = (): AccountForm => ({
   name: "", currency: "TWD", balance: "0", note: "",
@@ -112,10 +116,16 @@ function normalizeFx(row: Record<string, unknown>): FxRecord {
   };
 }
 function normalizeDividend(row: Record<string, unknown>): DividendRecord {
+  const grossAmount = number(row.grossAmount || row.amount);
+  const tax = number(row.tax);
+  const fee = number(row.fee);
+  const netAmount = number(row.netAmount) || Math.max(0, grossAmount - tax - fee);
+  const symbol = String(row.symbol || row.ticker || "");
   return {
     id: String(row.id ?? ""), date: String(row.date ?? ""), market: row.market === "US" ? "US" : "TW",
-    ticker: String(row.ticker ?? ""), name: String(row.name ?? ""), amount: number(row.amount),
-    tax: number(row.tax), currency: row.currency === "USD" ? "USD" : "TWD",
+    broker: String(row.broker ?? ""), account: String(row.account ?? ""), symbol,
+    ticker: symbol, name: String(row.name ?? ""), grossAmount, amount: grossAmount,
+    tax, fee, netAmount, currency: row.currency === "USD" ? "USD" : "TWD",
     exchangeRate: number(row.exchangeRate), amountTwd: number(row.amountTwd),
     note: String(row.note ?? ""), createdAt: String(row.createdAt ?? ""), updatedAt: String(row.updatedAt ?? ""),
   };
@@ -165,6 +175,7 @@ export default function InvestmentsPage() {
   const [adjustmentForm, setAdjustmentForm] = useState(emptyAdjustment);
   const [message, setMessage] = useState("正在讀取投資資料…");
   const [saving, setSaving] = useState(false);
+  const [fxRateManual, setFxRateManual] = useState(false);
 
   async function load() {
     const results = await Promise.allSettled([
@@ -240,11 +251,58 @@ export default function InvestmentsPage() {
   }
   function openFx(item?: FxRecord) {
     setFxForm(item ? { ...item, fromAmount: String(item.fromAmount), toAmount: String(item.toAmount), exchangeRate: String(item.exchangeRate), fee: String(item.fee) } : emptyFx());
+    setFxRateManual(Boolean(item));
     setEditor("fx");
   }
   function openDividend(item?: DividendRecord) {
-    setDividendForm(item ? { ...item, amount: String(item.amount), tax: String(item.tax), exchangeRate: String(item.exchangeRate), amountTwd: String(item.amountTwd) } : emptyDividend());
+    setDividendForm(item ? {
+      ...item,
+      grossAmount: String(item.grossAmount), amount: String(item.amount),
+      tax: String(item.tax), fee: String(item.fee), netAmount: String(item.netAmount),
+      exchangeRate: String(item.exchangeRate), amountTwd: String(item.amountTwd),
+    } : emptyDividend());
     setEditor("dividend");
+  }
+  function updateTradeSymbol(value: string) {
+    const ticker = normalizeSymbol(value);
+    setTradeForm((current) => ({
+      ...current,
+      ticker,
+      name: current.name || getSymbolName(ticker),
+    }));
+  }
+  function updateDividendSymbol(value: string) {
+    const symbol = normalizeSymbol(value);
+    setDividendForm((current) => ({
+      ...current,
+      symbol,
+      ticker: symbol,
+      name: current.name || getSymbolName(symbol),
+    }));
+  }
+  function updateFxAmount(
+    key: "fromAmount" | "toAmount",
+    value: string,
+  ) {
+    setFxForm((current) => {
+      const next = { ...current, [key]: value };
+      if (
+        !fxRateManual &&
+        next.fromAmount !== "" &&
+        next.toAmount !== "" &&
+        number(next.fromAmount) > 0
+      ) {
+        next.exchangeRate = (
+          number(next.toAmount) / number(next.fromAmount)
+        ).toFixed(6);
+      } else if (
+        !fxRateManual &&
+        (next.fromAmount === "" || next.toAmount === "")
+      ) {
+        next.exchangeRate = "";
+      }
+      return next;
+    });
   }
   function openAccount(currency: Currency = "TWD") {
     setAccountForm({ ...emptyAccount(), currency });
@@ -284,7 +342,19 @@ export default function InvestmentsPage() {
   }
   async function saveDividend(event: React.FormEvent) {
     event.preventDefault(); setSaving(true); const stamp = nowIso();
-    const payload: DividendRecord = { ...dividendForm, ticker: dividendForm.ticker.trim().toUpperCase(), name: dividendForm.name.trim(), amount: number(dividendForm.amount), tax: number(dividendForm.tax), exchangeRate: number(dividendForm.exchangeRate), amountTwd: number(dividendForm.amountTwd), id: dividendForm.id || `dividend-${Date.now()}`, createdAt: dividendForm.createdAt || stamp, updatedAt: stamp };
+    const symbol = normalizeSymbol(dividendForm.symbol || dividendForm.ticker);
+    const grossAmount = number(dividendForm.grossAmount || dividendForm.amount);
+    const tax = number(dividendForm.tax);
+    const fee = number(dividendForm.fee);
+    const netAmount = Math.max(0, number(dividendForm.netAmount) || grossAmount - tax - fee);
+    const payload: DividendRecord = {
+      ...dividendForm, symbol, ticker: symbol, name: dividendForm.name.trim(),
+      grossAmount, amount: grossAmount, tax, fee, netAmount,
+      exchangeRate: number(dividendForm.exchangeRate),
+      amountTwd: number(dividendForm.amountTwd),
+      id: dividendForm.id || `dividend-${Date.now()}`,
+      createdAt: dividendForm.createdAt || stamp, updatedAt: stamp,
+    };
     try {
       if (dividendForm.id) await updateDividendRecord(dividendForm.id, payload); else await createDividendRecord(payload);
       await load(); setEditor(null); setMessage("股息已儲存");
@@ -404,7 +474,7 @@ export default function InvestmentsPage() {
         {editor === "trade" ? <form onSubmit={saveTrade} className="grid grid-cols-2 gap-3">
           <Field label="日期"><input required type="date" value={tradeForm.date} onChange={(e) => setTradeForm({...tradeForm,date:e.target.value})}/></Field>
           <Field label="市場"><select value={tradeForm.market} onChange={(e) => { const market=e.target.value as Market; setTradeForm({...tradeForm,market,currency:market==="US"?"USD":"TWD",exchangeRate:market==="US"?tradeForm.exchangeRate||"":"1"}); }}><option value="TW">台股</option><option value="US">美股</option></select></Field>
-          <Field label="股票代號"><input required value={tradeForm.ticker} onChange={(e) => setTradeForm({...tradeForm,ticker:e.target.value})}/></Field>
+          <Field label="股票代號"><input required value={tradeForm.ticker} onChange={(e) => updateTradeSymbol(e.target.value)}/></Field>
           <Field label="名稱"><input required value={tradeForm.name} onChange={(e) => setTradeForm({...tradeForm,name:e.target.value})}/></Field>
           <Field label="方向"><select value={tradeForm.side} onChange={(e) => setTradeForm({...tradeForm,side:e.target.value as TradeSide})}><option value="buy">買入</option><option value="sell">賣出</option></select></Field>
           <Field label="幣別"><select value={tradeForm.currency} onChange={(e) => setTradeForm({...tradeForm,currency:e.target.value as Currency})}><option value="TWD">TWD</option><option value="USD">USD</option></select></Field>
@@ -416,16 +486,34 @@ export default function InvestmentsPage() {
         {editor === "fx" ? <form onSubmit={saveFx} className="grid grid-cols-2 gap-3">
           <Field label="日期"><input required type="date" value={fxForm.date} onChange={(e) => setFxForm({...fxForm,date:e.target.value})}/></Field>
           <Field label="流向"><select value={`${fxForm.fromCurrency}-${fxForm.toCurrency}`} onChange={(e) => {const [fromCurrency,toCurrency]=e.target.value.split("-") as [Currency,Currency];setFxForm({...fxForm,fromCurrency,toCurrency});}}><option value="TWD-USD">TWD → USD</option><option value="USD-TWD">USD → TWD</option></select></Field>
-          {(["fromAmount","toAmount","exchangeRate","fee"] as const).map((key) => <Field key={key} label={{fromAmount:"換出金額",toAmount:"換入金額",exchangeRate:"匯率",fee:"手續費"}[key]}><input required type="number" step="any" min="0" value={fxForm[key]} onChange={(e) => setFxForm({...fxForm,[key]:e.target.value})}/></Field>)}
+          {(["fromAmount","toAmount","exchangeRate","fee"] as const).map((key) => <Field key={key} label={{fromAmount:"換出金額",toAmount:"換入金額",exchangeRate:"匯率",fee:"手續費"}[key]}><input required type="number" step="any" min="0" value={fxForm[key]} onChange={(e) => {
+            if (key === "fromAmount" || key === "toAmount") {
+              updateFxAmount(key, e.target.value);
+            } else {
+              if (key === "exchangeRate") setFxRateManual(true);
+              setFxForm({...fxForm,[key]:e.target.value});
+            }
+          }}/></Field>)}
           <Field label="備註" wide><input value={fxForm.note} onChange={(e) => setFxForm({...fxForm,note:e.target.value})}/></Field><Submit saving={saving}/>
         </form> : null}
         {editor === "dividend" ? <form onSubmit={saveDividend} className="grid grid-cols-2 gap-3">
           <Field label="日期"><input required type="date" value={dividendForm.date} onChange={(e) => setDividendForm({...dividendForm,date:e.target.value})}/></Field>
           <Field label="市場"><select value={dividendForm.market} onChange={(e) => {const market=e.target.value as Market;setDividendForm({...dividendForm,market,currency:market==="US"?"USD":"TWD",exchangeRate:market==="US"?"":"1"});}}><option value="TW">台股</option><option value="US">美股</option></select></Field>
-          <Field label="股票代號"><input required value={dividendForm.ticker} onChange={(e) => setDividendForm({...dividendForm,ticker:e.target.value})}/></Field>
+          <Field label="股票代號"><input required value={dividendForm.symbol} onChange={(e) => updateDividendSymbol(e.target.value)}/></Field>
           <Field label="名稱"><input required value={dividendForm.name} onChange={(e) => setDividendForm({...dividendForm,name:e.target.value})}/></Field>
+          <Field label="現金帳戶" wide><input required placeholder="例如：美股證券戶" value={dividendForm.account} onChange={(e) => setDividendForm({...dividendForm,account:e.target.value})}/></Field>
           <Field label="幣別"><select value={dividendForm.currency} onChange={(e) => setDividendForm({...dividendForm,currency:e.target.value as Currency})}><option value="TWD">TWD</option><option value="USD">USD</option></select></Field>
-          {(["amount","tax","exchangeRate","amountTwd"] as const).map((key) => <Field key={key} label={{amount:"原幣金額",tax:"稅額",exchangeRate:"匯率",amountTwd:"折合台幣"}[key]}><input required type="number" step="any" min="0" value={dividendForm[key]} onChange={(e) => {const next={...dividendForm,[key]:e.target.value};if(key==="amount"||key==="tax"||key==="exchangeRate")next.amountTwd=String(Math.max(0,number(next.amount)-number(next.tax))*number(next.exchangeRate));setDividendForm(next);}}/></Field>)}
+          {(["grossAmount","tax","fee","netAmount","exchangeRate","amountTwd"] as const).map((key) => <Field key={key} label={{grossAmount:"股息總額",tax:"稅額",fee:"費用",netAmount:"實收金額",exchangeRate:"匯率",amountTwd:"折合台幣"}[key]}><input required type="number" step="any" min="0" value={dividendForm[key]} onChange={(e) => {
+            const next = {...dividendForm,[key]:e.target.value};
+            if (key === "grossAmount" || key === "tax" || key === "fee") {
+              next.netAmount = String(Math.max(0, number(next.grossAmount) - number(next.tax) - number(next.fee)));
+            }
+            if (key !== "amountTwd") {
+              next.amountTwd = String(number(next.netAmount) * number(next.exchangeRate));
+            }
+            next.amount = next.grossAmount;
+            setDividendForm(next);
+          }}/></Field>)}
           <Field label="備註" wide><input value={dividendForm.note} onChange={(e) => setDividendForm({...dividendForm,note:e.target.value})}/></Field><Submit saving={saving}/>
         </form> : null}
         {editor === "account" ? <form onSubmit={saveAccount} className="grid grid-cols-2 gap-3">
