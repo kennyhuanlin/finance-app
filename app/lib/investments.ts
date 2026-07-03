@@ -219,6 +219,34 @@ export function formatInvestmentMoney(
   return `${currency === "TWD" ? "NT$" : "US$"}${amount}`;
 }
 
+export function getExchangeRateDisplay(
+  fromCurrency: Currency,
+  toCurrency: Currency,
+  storedRate: number,
+) {
+  if (!Number.isFinite(storedRate) || storedRate <= 0) return 0;
+  if (fromCurrency === "TWD" && toCurrency === "USD") {
+    return 1 / storedRate;
+  }
+  if (fromCurrency === "USD" && toCurrency === "TWD") {
+    return storedRate;
+  }
+  return storedRate;
+}
+
+export function formatExchangeRate(
+  fromCurrency: Currency,
+  toCurrency: Currency,
+  storedRate: number,
+) {
+  const rate = getExchangeRateDisplay(
+    fromCurrency,
+    toCurrency,
+    storedRate,
+  );
+  return `1 USD = ${rate.toFixed(4)} TWD`;
+}
+
 export function localDateKey(date = new Date()) {
   const year = date.getFullYear();
   const month = String(date.getMonth() + 1).padStart(2, "0");

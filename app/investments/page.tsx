@@ -10,7 +10,9 @@ import {
   type Currency,
   type DividendRecord,
   type FxRecord,
+  formatExchangeRate,
   formatInvestmentMoney,
+  getExchangeRateDisplay,
   getSymbolName,
   type InvestmentTrade,
   type InvestmentPosition,
@@ -195,6 +197,7 @@ export default function InvestmentsPage() {
   const [message, setMessage] = useState("正在讀取投資資料…");
   const [saving, setSaving] = useState(false);
   const [fxRateManual, setFxRateManual] = useState(false);
+  const [fxRateDisplay, setFxRateDisplay] = useState("");
   const [resourceErrors, setResourceErrors] = useState<
     Partial<Record<InvestmentResource, ResourceErrorInfo>>
   >({});
@@ -240,11 +243,14 @@ export default function InvestmentsPage() {
   const latestUsdTwdRate = fxRecords
     .slice()
     .sort((a, b) => `${b.date}|${b.updatedAt}`.localeCompare(`${a.date}|${a.updatedAt}`))
-    .map((item) => item.exchangeRate || (
-      item.fromCurrency === "USD"
-        ? item.toAmount / Math.max(item.fromAmount, 1)
-        : item.fromAmount / Math.max(item.toAmount, 1)
-    ))
+    .map((item) =>
+      getExchangeRateDisplay(
+        item.fromCurrency,
+        item.toCurrency,
+        item.exchangeRate ||
+          item.toAmount / Math.max(item.fromAmount, 1),
+      ),
+    )
     .find((rate) => rate > 0) ?? 1;
   const investmentCostTwd = twCost + usCost * latestUsdTwdRate;
   const estimatedAssets = twdCash + usdCash * latestUsdTwdRate + investmentCostTwd;
@@ -256,6 +262,15 @@ export default function InvestmentsPage() {
   }
   function openFx(item?: FxRecord) {
     setFxForm(item ? { ...item, fromAmount: String(item.fromAmount), toAmount: String(item.toAmount), exchangeRate: String(item.exchangeRate), fee: String(item.fee) } : emptyFx());
+    setFxRateDisplay(
+      item
+        ? getExchangeRateDisplay(
+            item.fromCurrency,
+            item.toCurrency,
+            item.exchangeRate,
+          ).toFixed(4)
+        : "",
+    );
     setFxRateManual(false);
     setEditor("fx");
   }
@@ -317,25 +332,77 @@ export default function InvestmentsPage() {
     key: "fromAmount" | "toAmount",
     value: string,
   ) {
-    setFxForm((current) => {
-      const next = { ...current, [key]: value };
-      if (
-        !fxRateManual &&
-        next.fromAmount !== "" &&
-        next.toAmount !== "" &&
-        number(next.fromAmount) > 0
-      ) {
-        next.exchangeRate = (
-          number(next.toAmount) / number(next.fromAmount)
-        ).toFixed(6);
-      } else if (
-        !fxRateManual &&
-        (next.fromAmount === "" || next.toAmount === "")
-      ) {
-        next.exchangeRate = "";
-      }
-      return next;
+    const next = { ...fxForm, [key]: value };
+    if (
+      !fxRateManual &&
+      next.fromAmount !== "" &&
+      next.toAmount !== "" &&
+      number(next.fromAmount) > 0
+    ) {
+      next.exchangeRate = (
+        number(next.toAmount) / number(next.fromAmount)
+      ).toFixed(8);
+      setFxRateDisplay(
+        getExchangeRateDisplay(
+          next.fromCurrency,
+          next.toCurrency,
+          number(next.exchangeRate),
+        ).toFixed(4),
+      );
+    } else if (
+      !fxRateManual &&
+      (next.fromAmount === "" || next.toAmount === "")
+    ) {
+      next.exchangeRate = "";
+      setFxRateDisplay("");
+    }
+    setFxForm(next);
+  }
+  function updateFxDisplayRate(value: string) {
+    setFxRateManual(true);
+    setFxRateDisplay(value);
+    const displayRate = number(value);
+    const storedRate =
+      fxForm.fromCurrency === "TWD" && fxForm.toCurrency === "USD"
+        ? displayRate > 0
+          ? 1 / displayRate
+          : 0
+        : displayRate;
+    setFxForm({
+      ...fxForm,
+      exchangeRate: value === "" ? "" : storedRate.toFixed(8),
     });
+  }
+  function updateFxDirection(fromCurrency: Currency, toCurrency: Currency) {
+    let storedRate = number(fxForm.exchangeRate);
+    if (
+      !fxRateManual &&
+      number(fxForm.fromAmount) > 0 &&
+      fxForm.toAmount !== ""
+    ) {
+      storedRate =
+        number(fxForm.toAmount) / number(fxForm.fromAmount);
+    } else if (fxRateManual && number(fxRateDisplay) > 0) {
+      storedRate =
+        fromCurrency === "TWD" && toCurrency === "USD"
+          ? 1 / number(fxRateDisplay)
+          : number(fxRateDisplay);
+    }
+    setFxForm({
+      ...fxForm,
+      fromCurrency,
+      toCurrency,
+      exchangeRate: storedRate > 0 ? storedRate.toFixed(8) : "",
+    });
+    setFxRateDisplay(
+      storedRate > 0
+        ? getExchangeRateDisplay(
+            fromCurrency,
+            toCurrency,
+            storedRate,
+          ).toFixed(4)
+        : "",
+    );
   }
   function openAccount(currency: Currency = "TWD", item?: CashAccount) {
     setAccountForm(
@@ -546,7 +613,7 @@ export default function InvestmentsPage() {
             ["累計股息", formatInvestmentMoney(dividendTwd, "TWD")],
             ["投資帳戶總資產估算", formatInvestmentMoney(estimatedAssets, "TWD")],
           ].map(([label, value]) => <article key={label} className={card}><p className="text-xs font-medium text-slate-500">{label}</p><p className="mt-3 text-xl font-semibold">{value}</p></article>)}
-          <p className="col-span-2 px-1 text-xs text-slate-400 lg:col-span-3">美元換算匯率：{latestUsdTwdRate.toFixed(4)}；股票資產暫以持有成本估算。</p>
+          <p className="col-span-2 px-1 text-xs text-slate-400 lg:col-span-3">美元換算匯率：1 USD = {latestUsdTwdRate.toFixed(4)} TWD；股票資產暫以持有成本估算。</p>
         </div> : null}
 
         {tab === "trades" ? <RecordSection title="買賣紀錄" action={() => openTrade()} error={resourceErrors.investment_trades}>
@@ -583,7 +650,7 @@ export default function InvestmentsPage() {
         </section> : null}
 
         {tab === "fx" ? <RecordSection title="換匯紀錄" action={() => openFx()} error={resourceErrors.fx_records}>
-          {fxRecords.slice().sort((a,b) => b.date.localeCompare(a.date)).map((item) => <RecordRow key={item.id} title={`${item.fromCurrency} → ${item.toCurrency}`} meta={`${item.date} · 匯率 ${item.exchangeRate}`} amount={`${formatInvestmentMoney(item.fromAmount, item.fromCurrency)} → ${formatInvestmentMoney(item.toAmount, item.toCurrency)}`} onEdit={() => openFx(item)} onDelete={() => remove("fx", item.id)} />)}
+          {fxRecords.slice().sort((a,b) => b.date.localeCompare(a.date)).map((item) => <RecordRow key={item.id} title={`${item.fromCurrency} → ${item.toCurrency}`} meta={`${item.date} · ${formatExchangeRate(item.fromCurrency,item.toCurrency,item.exchangeRate)}`} amount={`${formatInvestmentMoney(item.fromAmount, item.fromCurrency)} → ${formatInvestmentMoney(item.toAmount, item.toCurrency)}`} onEdit={() => openFx(item)} onDelete={() => remove("fx", item.id)} />)}
         </RecordSection> : null}
 
         {tab === "dividends" ? <RecordSection title="股息紀錄" action={() => openDividend()} error={resourceErrors.dividend_records}>
@@ -607,12 +674,13 @@ export default function InvestmentsPage() {
         </form> : null}
         {editor === "fx" ? <form onSubmit={saveFx} className="grid grid-cols-2 gap-3">
           <Field label="日期"><input required type="date" value={fxForm.date} onChange={(e) => setFxForm({...fxForm,date:e.target.value})}/></Field>
-          <Field label="流向"><select value={`${fxForm.fromCurrency}-${fxForm.toCurrency}`} onChange={(e) => {const [fromCurrency,toCurrency]=e.target.value.split("-") as [Currency,Currency];setFxForm({...fxForm,fromCurrency,toCurrency});}}><option value="TWD-USD">TWD → USD</option><option value="USD-TWD">USD → TWD</option></select></Field>
-          {(["fromAmount","toAmount","exchangeRate","fee"] as const).map((key) => <Field key={key} label={{fromAmount:"換出金額",toAmount:"換入金額",exchangeRate:"匯率",fee:"手續費"}[key]}><input required type="number" step="any" min="0" value={fxForm[key]} onChange={(e) => {
+          <Field label="流向"><select value={`${fxForm.fromCurrency}-${fxForm.toCurrency}`} onChange={(e) => {const [fromCurrency,toCurrency]=e.target.value.split("-") as [Currency,Currency];updateFxDirection(fromCurrency,toCurrency);}}><option value="TWD-USD">TWD → USD</option><option value="USD-TWD">USD → TWD</option></select></Field>
+          {(["fromAmount","toAmount","exchangeRate","fee"] as const).map((key) => <Field key={key} label={{fromAmount:"換出金額",toAmount:"換入金額",exchangeRate:"匯率（1 USD = TWD）",fee:"手續費"}[key]}><input required type="number" step="any" min="0" value={key === "exchangeRate" ? fxRateDisplay : fxForm[key]} onChange={(e) => {
             if (key === "fromAmount" || key === "toAmount") {
               updateFxAmount(key, e.target.value);
+            } else if (key === "exchangeRate") {
+              updateFxDisplayRate(e.target.value);
             } else {
-              if (key === "exchangeRate") setFxRateManual(true);
               setFxForm({...fxForm,[key]:e.target.value});
             }
           }}/></Field>)}
