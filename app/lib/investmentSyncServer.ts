@@ -12,7 +12,7 @@ import {
   type InvestmentTrade,
 } from "./investments";
 import {
-  readWorksheet,
+  readWorksheetCached,
   replaceWorksheetRows,
 } from "./googleSheetsServer";
 
@@ -100,7 +100,7 @@ const generatedRelatedTypes = new Set([
 ]);
 
 export async function refreshInvestmentPositions() {
-  const trades = (await readWorksheet("investment_trades")).map(trade);
+  const trades = (await readWorksheetCached("investment_trades")).map(trade);
   const positions = calculatePositions(trades).map((position) => ({
     ...position,
     updatedAt: new Date().toISOString(),
@@ -112,11 +112,11 @@ export async function refreshInvestmentPositions() {
 export async function refreshCashAccounts() {
   const [accountRows, ledgerRows, tradeRows, fxRows, dividendRows] =
     await Promise.all([
-      readWorksheet("cash_accounts"),
-      readWorksheet("cash_ledger"),
-      readWorksheet("investment_trades"),
-      readWorksheet("fx_records"),
-      readWorksheet("dividend_records"),
+      readWorksheetCached("cash_accounts"),
+      readWorksheetCached("cash_ledger"),
+      readWorksheetCached("investment_trades"),
+      readWorksheetCached("fx_records"),
+      readWorksheetCached("dividend_records"),
     ]);
   const accounts = accountRows.map(account);
   const dividends = dividendRows.map((row) => {

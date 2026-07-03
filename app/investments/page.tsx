@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Pencil, Trash2 } from "lucide-react";
 import {
   calculatePositions,
@@ -29,12 +29,7 @@ import {
   deleteFxRecord,
   deleteInvestmentTrade,
   deleteCashAccount,
-  getDividendRecords,
-  getCashAccounts,
-  getCashLedger,
-  getFxRecords,
-  getInvestmentTrades,
-  getInvestmentPositions,
+  getInvestmentBundle,
   SheetRequestError,
   updateCashAccount,
   updateDividendRecord,
@@ -203,64 +198,31 @@ export default function InvestmentsPage() {
   const [resourceErrors, setResourceErrors] = useState<
     Partial<Record<InvestmentResource, ResourceErrorInfo>>
   >({});
+  const isLoadingRef = useRef(false);
+  const hasLoadedRef = useRef(false);
 
-  async function load() {
-    const results = await Promise.allSettled([
-      getInvestmentTrades<Record<string, unknown>>(),
-      getInvestmentPositions<Record<string, unknown>>(),
-      getFxRecords<Record<string, unknown>>(),
-      getDividendRecords<Record<string, unknown>>(),
-      getCashAccounts<Record<string, unknown>>(),
-      getCashLedger<Record<string, unknown>>(),
-    ]);
-    const [tradeResult, positionResult, fxResult, dividendResult, accountResult, ledgerResult] = results;
-    const resources: InvestmentResource[] = [
-      "investment_trades",
-      "investment_positions",
-      "fx_records",
-      "dividend_records",
-      "cash_accounts",
-      "cash_ledger",
-    ];
-    const nextErrors: Partial<
-      Record<InvestmentResource, ResourceErrorInfo>
-    > = {};
-    results.forEach((result, index) => {
-      if (result.status !== "rejected") return;
-      const resource = resources[index];
-      const reason = result.reason;
-      nextErrors[resource] = {
-        resource,
-        status: reason instanceof SheetRequestError ? reason.status : 0,
-        message:
-          reason instanceof Error ? reason.message : "Unknown request error",
-      };
-    });
-    setResourceErrors(nextErrors);
-
-    if (tradeResult.status === "fulfilled") {
-      setTrades(tradeResult.value.map(normalizeTrade));
+  async function load(force = false) {
+    if (isLoadingRef.current || (hasLoadedRef.current && !force)) return;
+    isLoadingRef.current = true;
+    try {
+      const bundle = await getInvestmentBundle(force);
+      setTrades(bundle.data.investment_trades.map(normalizeTrade));
+      setPositionSnapshots(
+        bundle.data.investment_positions.map(normalizePosition),
+      );
+      setFxRecords(bundle.data.fx_records.map(normalizeFx));
+      setDividends(bundle.data.dividend_records.map(normalizeDividend));
+      setCashAccounts(bundle.data.cash_accounts.map(normalizeAccount));
+      setCashLedger(bundle.data.cash_ledger.map(normalizeLedger));
+      setResourceErrors(bundle.errors);
+      hasLoadedRef.current = true;
+    } finally {
+      isLoadingRef.current = false;
     }
-    if (positionResult.status === "fulfilled") {
-      setPositionSnapshots(positionResult.value.map(normalizePosition));
-    }
-    if (fxResult.status === "fulfilled") {
-      setFxRecords(fxResult.value.map(normalizeFx));
-    }
-    if (dividendResult.status === "fulfilled") {
-      setDividends(dividendResult.value.map(normalizeDividend));
-    }
-    if (accountResult.status === "fulfilled") {
-      setCashAccounts(accountResult.value.map(normalizeAccount));
-    }
-    if (ledgerResult.status === "fulfilled") {
-      setCashLedger(ledgerResult.value.map(normalizeLedger));
-    }
-
-    return nextErrors;
   }
   useEffect(() => {
-    const request = Promise.resolve().then(load);
+    if (hasLoadedRef.current || isLoadingRef.current) return;
+    const request = Promise.resolve().then(() => load());
     request
       .then(() => setMessage(""))
       .catch((error) =>
@@ -423,7 +385,7 @@ export default function InvestmentsPage() {
     try {
       if (editingTradeId) await updateInvestmentTrade(editingTradeId, payload);
       else await createInvestmentTrade(payload);
-      await load();
+      await load(true);
       setEditingTradeId(null);
       setEditor(null);
       setMessage(editingTradeId ? "交易已更新" : "交易已新增");
@@ -448,7 +410,7 @@ export default function InvestmentsPage() {
     const payload: FxRecord = { ...fxForm, fromAmount: number(fxForm.fromAmount), toAmount: number(fxForm.toAmount), exchangeRate: number(fxForm.exchangeRate), fee: number(fxForm.fee), id: fxForm.id || `fx-${Date.now()}`, createdAt: fxForm.createdAt || stamp, updatedAt: stamp };
     try {
       if (fxForm.id) await updateFxRecord(fxForm.id, payload); else await createFxRecord(payload);
-      await load(); setEditor(null); setMessage("換匯紀錄已儲存");
+      await load(true); setEditor(null); setMessage("換匯紀錄已儲存");
     } catch { setMessage("換匯紀錄儲存失敗"); } finally { setSaving(false); }
   }
   async function saveDividend(event: React.FormEvent) {
@@ -472,7 +434,7 @@ export default function InvestmentsPage() {
     };
     try {
       if (dividendForm.id) await updateDividendRecord(dividendForm.id, payload); else await createDividendRecord(payload);
-      await load(); setEditor(null); setMessage("股息已儲存");
+      await load(true); setEditor(null); setMessage("股息已儲存");
     } catch { setMessage("股息儲存失敗"); } finally { setSaving(false); }
   }
   async function saveAccount(event: React.FormEvent) {
@@ -518,7 +480,7 @@ export default function InvestmentsPage() {
           note: accountForm.note.trim(), createdAt: stamp, updatedAt: stamp,
         });
       }
-      await load(); setEditor(null);
+      await load(true); setEditor(null);
       setMessage(accountForm.id ? "現金帳戶已更新" : "現金帳戶已建立");
     } catch { setMessage("現金帳戶儲存失敗"); } finally { setSaving(false); }
   }
@@ -539,7 +501,7 @@ export default function InvestmentsPage() {
         relatedId: account.id, note: adjustmentForm.note.trim() || "手動調整",
         createdAt: stamp,
       });
-      await load(); setEditor(null); setMessage("現金餘額已調整");
+      await load(true); setEditor(null); setMessage("現金餘額已調整");
     } catch { setMessage("現金餘額調整失敗"); } finally { setSaving(false); }
   }
   async function remove(kind: Exclude<Editor, null>, id: string) {
@@ -549,7 +511,7 @@ export default function InvestmentsPage() {
       if (kind === "fx") await deleteFxRecord(id);
       if (kind === "dividend") await deleteDividendRecord(id);
       if (kind === "account") await deleteCashAccount(id);
-      await load(); setMessage("紀錄已刪除");
+      await load(true); setMessage("紀錄已刪除");
     } catch { setMessage("刪除失敗"); }
   }
 

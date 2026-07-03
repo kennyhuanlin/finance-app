@@ -20,6 +20,31 @@ const sheetApiRoutes: Record<SheetName, string> = {
   cash_accounts: "/api/google/cash-accounts",
   cash_ledger: "/api/google/cash-ledger",
 };
+const INVESTMENT_BUNDLE_CACHE_KEY = "finance-investment-bundle-v1";
+const INVESTMENT_BUNDLE_TTL = 45_000;
+
+export type InvestmentBundleResource =
+  | "investment_trades"
+  | "investment_positions"
+  | "fx_records"
+  | "dividend_records"
+  | "cash_accounts"
+  | "cash_ledger";
+
+export type InvestmentBundle = {
+  data: Record<InvestmentBundleResource, Record<string, unknown>[]>;
+  errors: Partial<
+    Record<
+      InvestmentBundleResource,
+      { resource: InvestmentBundleResource; status: number; message: string }
+    >
+  >;
+};
+
+let investmentBundleCache:
+  | { value: InvestmentBundle; timestamp: number }
+  | undefined;
+let pendingInvestmentBundle: Promise<InvestmentBundle> | undefined;
 
 export const recurringRuleColumns = [
   "id",
@@ -118,7 +143,87 @@ async function mutateSheetRow<T extends Record<string, unknown>>(
     );
   }
 
+  if (
+    sheet === "investment_trades" ||
+    sheet === "investment_positions" ||
+    sheet === "fx_records" ||
+    sheet === "dividend_records" ||
+    sheet === "cash_accounts" ||
+    sheet === "cash_ledger"
+  ) {
+    clearInvestmentBundleCache();
+  }
   return response.json();
+}
+
+export function clearInvestmentBundleCache() {
+  investmentBundleCache = undefined;
+  if (typeof window !== "undefined") {
+    sessionStorage.removeItem(INVESTMENT_BUNDLE_CACHE_KEY);
+  }
+}
+
+export async function getInvestmentBundle(force = false) {
+  if (!force) {
+    if (
+      investmentBundleCache &&
+      Date.now() - investmentBundleCache.timestamp < INVESTMENT_BUNDLE_TTL
+    ) {
+      return investmentBundleCache.value;
+    }
+    if (typeof window !== "undefined") {
+      const stored = sessionStorage.getItem(INVESTMENT_BUNDLE_CACHE_KEY);
+      if (stored) {
+        try {
+          const parsed = JSON.parse(stored) as {
+            value: InvestmentBundle;
+            timestamp: number;
+          };
+          if (Date.now() - parsed.timestamp < INVESTMENT_BUNDLE_TTL) {
+            investmentBundleCache = parsed;
+            return parsed.value;
+          }
+        } catch {
+          sessionStorage.removeItem(INVESTMENT_BUNDLE_CACHE_KEY);
+        }
+      }
+    }
+    if (pendingInvestmentBundle) return pendingInvestmentBundle;
+  }
+
+  const request = fetch("/api/google/investments", {
+    method: "GET",
+    cache: "no-store",
+  })
+    .then(async (response) => {
+      if (!response.ok) {
+        const body = (await response.json().catch(() => null)) as {
+          error?: string;
+        } | null;
+        throw new Error(body?.error ?? "Failed to fetch investment data");
+      }
+      return (await response.json()) as InvestmentBundle;
+    })
+    .then((value) => {
+      const cached = { value, timestamp: Date.now() };
+      investmentBundleCache = cached;
+      if (typeof window !== "undefined") {
+        try {
+          sessionStorage.setItem(
+            INVESTMENT_BUNDLE_CACHE_KEY,
+            JSON.stringify(cached),
+          );
+        } catch {
+          // Memory cache remains available when browser storage is unavailable.
+        }
+      }
+      return value;
+    })
+    .finally(() => {
+      pendingInvestmentBundle = undefined;
+    });
+  pendingInvestmentBundle = request;
+  return request;
 }
 
 export function getTransactions<T = Record<string, unknown>>() {

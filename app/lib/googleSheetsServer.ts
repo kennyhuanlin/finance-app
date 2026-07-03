@@ -71,6 +71,21 @@ export class GoogleSheetsApiError extends Error {
 
 let cachedToken: { value: string; expiresAt: number } | null = null;
 const pendingSheetEnsures = new Map<SupportedSheet, Promise<SheetProperties>>();
+const knownSheetProperties = new Map<SupportedSheet, SheetProperties>();
+const worksheetCache = new Map<
+  SupportedSheet,
+  { rows: Record<string, unknown>[]; timestamp: number }
+>();
+const pendingWorksheetReads = new Map<
+  SupportedSheet,
+  Promise<Record<string, unknown>[]>
+>();
+const pendingBatchReads = new Map<
+  string,
+  Promise<Record<SupportedSheet, Record<string, unknown>[]>>
+>();
+const rowIdsEnsured = new Set<SupportedSheet>();
+const WORKSHEET_CACHE_TTL = 30_000;
 
 type SheetProperties = {
   sheetId?: number;
@@ -247,13 +262,17 @@ async function ensureHeaderRow(sheet: SupportedSheet) {
 }
 
 export async function ensureWorksheetExists(sheet: SupportedSheet) {
+  const known = knownSheetProperties.get(sheet);
+  if (known) return known;
   const existingRequest = pendingSheetEnsures.get(sheet);
   if (existingRequest) return existingRequest;
 
   const request = createOrFindSheet(sheet);
   pendingSheetEnsures.set(sheet, request);
   try {
-    return await request;
+    const properties = await request;
+    knownSheetProperties.set(sheet, properties);
+    return properties;
   } finally {
     pendingSheetEnsures.delete(sheet);
   }
@@ -313,10 +332,126 @@ export async function readWorksheet(sheet: SupportedSheet) {
   return table.rows;
 }
 
+export function invalidateWorksheetCache(...sheets: SupportedSheet[]) {
+  sheets.forEach((sheet) => {
+    worksheetCache.delete(sheet);
+    pendingWorksheetReads.delete(sheet);
+  });
+}
+
+export async function readWorksheetCached(sheet: SupportedSheet) {
+  const cached = worksheetCache.get(sheet);
+  if (cached && Date.now() - cached.timestamp < WORKSHEET_CACHE_TTL) {
+    return cached.rows;
+  }
+
+  const pending = pendingWorksheetReads.get(sheet);
+  if (pending) return pending;
+
+  const request = readWorksheet(sheet)
+    .then((rows) => {
+      worksheetCache.set(sheet, { rows, timestamp: Date.now() });
+      return rows;
+    })
+    .finally(() => pendingWorksheetReads.delete(sheet));
+  pendingWorksheetReads.set(sheet, request);
+  return request;
+}
+
+export async function readWorksheetCachedWithRetry(sheet: SupportedSheet) {
+  const delays = [1000, 3000, 6000];
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      return await readWorksheetCached(sheet);
+    } catch (error) {
+      const retry =
+        error instanceof GoogleSheetsApiError &&
+        [429, 500, 503].includes(error.status) &&
+        attempt < delays.length;
+      if (!retry) throw error;
+      const jitter = Math.floor(Math.random() * 300);
+      await new Promise((resolve) =>
+        setTimeout(resolve, delays[attempt] + jitter),
+      );
+    }
+  }
+}
+
+export async function readWorksheetsCachedWithRetry(
+  sheets: SupportedSheet[],
+) {
+  const result = {} as Record<
+    SupportedSheet,
+    Record<string, unknown>[]
+  >;
+  const missing = sheets.filter((sheet) => {
+    const cached = worksheetCache.get(sheet);
+    if (cached && Date.now() - cached.timestamp < WORKSHEET_CACHE_TTL) {
+      result[sheet] = cached.rows;
+      return false;
+    }
+    return true;
+  });
+  if (!missing.length) return result;
+
+  const batchKey = [...missing].sort().join(",");
+  const existing = pendingBatchReads.get(batchKey);
+  const batchRequest =
+    existing ??
+    (async () => {
+      await Promise.all(missing.map(ensureWorksheetExists));
+      const { spreadsheetId } = getConfig();
+      const params = new URLSearchParams();
+      missing.forEach((sheet) => params.append("ranges", `${sheet}!A:Z`));
+      const delays = [1000, 3000, 6000];
+
+      for (let attempt = 0; ; attempt += 1) {
+        try {
+          const response = await googleRequest<{
+            valueRanges?: Array<{ values?: unknown[][] }>;
+          }>(
+            `${SHEETS_API}/${encodeURIComponent(spreadsheetId)}/values:batchGet?${params.toString()}`,
+          );
+          const rows = {} as Record<
+            SupportedSheet,
+            Record<string, unknown>[]
+          >;
+          missing.forEach((sheet, index) => {
+            const table = mapRows(response.valueRanges?.[index]?.values ?? []);
+            rows[sheet] = table.rows;
+            worksheetCache.set(sheet, {
+              rows: table.rows,
+              timestamp: Date.now(),
+            });
+          });
+          return rows;
+        } catch (error) {
+          const retry =
+            error instanceof GoogleSheetsApiError &&
+            [429, 500, 503].includes(error.status) &&
+            attempt < delays.length;
+          if (!retry) throw error;
+          const jitter = Math.floor(Math.random() * 300);
+          await new Promise((resolve) =>
+            setTimeout(resolve, delays[attempt] + jitter),
+          );
+        }
+      }
+    })().finally(() => pendingBatchReads.delete(batchKey));
+
+  if (!existing) pendingBatchReads.set(batchKey, batchRequest);
+  const fetched = await batchRequest;
+  missing.forEach((sheet) => {
+    result[sheet] = fetched[sheet] ?? [];
+  });
+  return result;
+}
+
 export async function ensureWorksheetRowIds(
   sheet: SupportedSheet,
   prefix: string,
 ) {
+  if (rowIdsEnsured.has(sheet)) return 0;
   const values = await getValues(sheet);
   const { headers, rows } = mapRows(values);
   const idColumn = headers.indexOf("id");
@@ -334,6 +469,8 @@ export async function ensureWorksheetRowIds(
     ]);
     updated += 1;
   }
+  rowIdsEnsured.add(sheet);
+  if (updated) invalidateWorksheetCache(sheet);
   return updated;
 }
 
@@ -349,7 +486,7 @@ export async function appendWorksheetRow(
 
   const { spreadsheetId } = getConfig();
   const range = encodeURIComponent(`${sheet}!A:Z`);
-  return googleRequest(
+  const result = await googleRequest(
     `${SHEETS_API}/${encodeURIComponent(spreadsheetId)}/values/${range}:append?valueInputOption=RAW&insertDataOption=INSERT_ROWS`,
     {
       method: "POST",
@@ -358,6 +495,8 @@ export async function appendWorksheetRow(
       }),
     },
   );
+  invalidateWorksheetCache(sheet);
+  return result;
 }
 
 export async function updateWorksheetRow(
@@ -378,6 +517,7 @@ export async function updateWorksheetRow(
     `A${index + 2}`,
     [headers.map((header) => normalizeCell(next[header]))],
   );
+  invalidateWorksheetCache(sheet);
   return { ok: true, id };
 }
 
@@ -412,6 +552,7 @@ export async function deleteWorksheetRow(sheet: SupportedSheet, id: string) {
       }),
     },
   );
+  invalidateWorksheetCache(sheet);
   return { ok: true, id };
 }
 
@@ -439,5 +580,6 @@ export async function replaceWorksheetRows(
       headers.map((header) => normalizeCell(record[header])),
     ),
   ]);
+  invalidateWorksheetCache(sheet);
   return { ok: true, count: records.length };
 }
