@@ -113,7 +113,7 @@ export default function BottomNav() {
         </div>
       ) : null}
 
-      <nav className="fixed inset-x-0 bottom-0 z-50 border-t border-slate-200/80 bg-white pb-[env(safe-area-inset-bottom)] shadow-[0_-10px_30px_rgba(15,23,42,0.07)]">
+      <nav className="fixed bottom-[max(12px,env(safe-area-inset-bottom))] left-0 right-0 z-50 border-t border-slate-200/80 bg-white shadow-[0_-10px_30px_rgba(15,23,42,0.07)]">
         <div className="mx-auto grid h-[82px] max-w-xl grid-cols-5">
           {items.slice(0, 2).map((item) => {
           const Icon = item.icon;
