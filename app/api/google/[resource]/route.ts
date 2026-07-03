@@ -27,11 +27,6 @@ const resourceSheets = {
 
 type Resource = keyof typeof resourceSheets;
 type Context = { params: Promise<{ resource: string }> };
-const legacyFallbackSheets = new Set<SupportedSheet>([
-  "transactions",
-  "categories",
-  "recurring",
-]);
 
 function getSheet(resource: string) {
   if (!(resource in resourceSheets)) {
@@ -105,8 +100,8 @@ async function appsScriptFallback(
   });
 }
 
-function shouldUseAppsScriptFallback(sheet: SupportedSheet) {
-  return !hasServiceAccountConfig() && legacyFallbackSheets.has(sheet);
+function shouldUseAppsScriptFallback() {
+  return !hasServiceAccountConfig();
 }
 
 function errorResponse(error: unknown) {
@@ -121,7 +116,7 @@ export async function GET(_request: NextRequest, context: Context) {
   try {
     const { resource } = await context.params;
     const sheet = getSheet(resource);
-    if (shouldUseAppsScriptFallback(sheet)) {
+    if (shouldUseAppsScriptFallback()) {
       return appsScriptFallback("GET", sheet);
     }
     await ensureWorksheetExists(sheet);
@@ -136,7 +131,7 @@ export async function POST(request: NextRequest, context: Context) {
     const { resource } = await context.params;
     const sheet = getSheet(resource);
     const body = await requestBody(request);
-    if (shouldUseAppsScriptFallback(sheet)) {
+    if (shouldUseAppsScriptFallback()) {
       return appsScriptFallback("POST", sheet, body);
     }
     await ensureWorksheetExists(sheet);
@@ -174,7 +169,7 @@ export async function PUT(request: NextRequest, context: Context) {
     const sheet = getSheet(resource);
     const body = await requestBody(request);
     const id = requireId(body);
-    if (shouldUseAppsScriptFallback(sheet)) {
+    if (shouldUseAppsScriptFallback()) {
       return appsScriptFallback("PUT", sheet, body);
     }
     await ensureWorksheetExists(sheet);
@@ -192,7 +187,7 @@ export async function DELETE(request: NextRequest, context: Context) {
     const sheet = getSheet(resource);
     const body = await requestBody(request);
     const id = requireId(body);
-    if (shouldUseAppsScriptFallback(sheet)) {
+    if (shouldUseAppsScriptFallback()) {
       return appsScriptFallback("DELETE", sheet, body);
     }
     await ensureWorksheetExists(sheet);
