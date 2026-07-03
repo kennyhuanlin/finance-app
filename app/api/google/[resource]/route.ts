@@ -3,6 +3,7 @@ import {
   appendWorksheetRow,
   deleteWorksheetRow,
   ensureWorksheetExists,
+  GoogleSheetsApiError,
   hasServiceAccountConfig,
   readWorksheet,
   type SupportedSheet,
@@ -13,26 +14,38 @@ import {
   refreshInvestmentPositions,
 } from "../../../lib/investmentSyncServer";
 
-const resourceSheets = {
-  transactions: "transactions",
-  categories: "categories",
-  recurring: "recurring",
-  "investment-trades": "investment_trades",
-  "fx-records": "fx_records",
-  "dividend-records": "dividend_records",
-  "investment-positions": "investment_positions",
-  "cash-accounts": "cash_accounts",
-  "cash-ledger": "cash_ledger",
-} as const satisfies Record<string, SupportedSheet>;
+const RESOURCE_CONFIG = {
+  transactions: { resource: "transactions", sheetName: "transactions" },
+  categories: { resource: "categories", sheetName: "categories" },
+  recurring: { resource: "recurring", sheetName: "recurring" },
+  "investment-trades": {
+    resource: "investment-trades",
+    sheetName: "investment_trades",
+  },
+  "investment-positions": {
+    resource: "investment-positions",
+    sheetName: "investment_positions",
+  },
+  "fx-records": { resource: "fx-records", sheetName: "fx_records" },
+  "dividend-records": {
+    resource: "dividend-records",
+    sheetName: "dividend_records",
+  },
+  "cash-accounts": { resource: "cash-accounts", sheetName: "cash_accounts" },
+  "cash-ledger": { resource: "cash-ledger", sheetName: "cash_ledger" },
+} as const satisfies Record<
+  string,
+  { resource: string; sheetName: SupportedSheet }
+>;
 
-type Resource = keyof typeof resourceSheets;
+type Resource = keyof typeof RESOURCE_CONFIG;
 type Context = { params: Promise<{ resource: string }> };
 
 function getSheet(resource: string) {
-  if (!(resource in resourceSheets)) {
+  if (!(resource in RESOURCE_CONFIG)) {
     throw new ApiError(`Unsupported Google Sheets resource: ${resource}`, 404);
   }
-  return resourceSheets[resource as Resource];
+  return RESOURCE_CONFIG[resource as Resource].sheetName;
 }
 
 class ApiError extends Error {
@@ -104,32 +117,59 @@ function shouldUseAppsScriptFallback() {
   return !hasServiceAccountConfig();
 }
 
-function errorResponse(error: unknown) {
-  const status = error instanceof ApiError ? error.status : 500;
+function errorResponse(
+  error: unknown,
+  resource: string,
+  sheetName: string,
+) {
+  const range = sheetName ? `${sheetName}!A:Z` : "";
+  const errorMessage =
+    error instanceof Error ? error.message : "Google Sheets request failed";
+  const responseData =
+    error instanceof GoogleSheetsApiError ? error.responseData : undefined;
+  const status =
+    error instanceof ApiError
+      ? error.status
+      : error instanceof GoogleSheetsApiError
+        ? error.status
+        : 500;
+
+  console.error("Google Sheets API route failed", {
+    resource,
+    sheetName,
+    range,
+    message: errorMessage,
+    responseData,
+  });
+
   return NextResponse.json(
-    { error: error instanceof Error ? error.message : "Google Sheets request failed" },
+    { error: errorMessage, resource, sheetName, range },
     { status },
   );
 }
 
 export async function GET(_request: NextRequest, context: Context) {
+  const { resource } = await context.params;
+  let sheetName = "";
   try {
-    const { resource } = await context.params;
     const sheet = getSheet(resource);
+    sheetName = sheet;
     if (shouldUseAppsScriptFallback()) {
       return appsScriptFallback("GET", sheet);
     }
     await ensureWorksheetExists(sheet);
     return NextResponse.json(await readWorksheet(sheet));
   } catch (error) {
-    return errorResponse(error);
+    return errorResponse(error, resource, sheetName);
   }
 }
 
 export async function POST(request: NextRequest, context: Context) {
+  const { resource } = await context.params;
+  let sheetName = "";
   try {
-    const { resource } = await context.params;
     const sheet = getSheet(resource);
+    sheetName = sheet;
     const body = await requestBody(request);
     if (shouldUseAppsScriptFallback()) {
       return appsScriptFallback("POST", sheet, body);
@@ -159,14 +199,16 @@ export async function POST(request: NextRequest, context: Context) {
     const sync = await syncDerivedSheets(sheet);
     return NextResponse.json({ ok: true, id: body.id, sync }, { status: 201 });
   } catch (error) {
-    return errorResponse(error);
+    return errorResponse(error, resource, sheetName);
   }
 }
 
 export async function PUT(request: NextRequest, context: Context) {
+  const { resource } = await context.params;
+  let sheetName = "";
   try {
-    const { resource } = await context.params;
     const sheet = getSheet(resource);
+    sheetName = sheet;
     const body = await requestBody(request);
     const id = requireId(body);
     if (shouldUseAppsScriptFallback()) {
@@ -177,14 +219,16 @@ export async function PUT(request: NextRequest, context: Context) {
     const sync = await syncDerivedSheets(sheet);
     return NextResponse.json({ ...result, sync });
   } catch (error) {
-    return errorResponse(error);
+    return errorResponse(error, resource, sheetName);
   }
 }
 
 export async function DELETE(request: NextRequest, context: Context) {
+  const { resource } = await context.params;
+  let sheetName = "";
   try {
-    const { resource } = await context.params;
     const sheet = getSheet(resource);
+    sheetName = sheet;
     const body = await requestBody(request);
     const id = requireId(body);
     if (shouldUseAppsScriptFallback()) {
@@ -195,7 +239,7 @@ export async function DELETE(request: NextRequest, context: Context) {
     const sync = await syncDerivedSheets(sheet);
     return NextResponse.json({ ...result, sync });
   } catch (error) {
-    return errorResponse(error);
+    return errorResponse(error, resource, sheetName);
   }
 }
 

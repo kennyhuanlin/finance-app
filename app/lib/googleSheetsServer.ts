@@ -33,7 +33,7 @@ export const sheetHeaders = {
     "exchangeRate", "fee", "note", "createdAt", "updatedAt",
   ],
   dividend_records: [
-    "id", "date", "market", "broker", "account", "symbol", "name", "currency",
+    "id", "date", "payDate", "market", "broker", "account", "symbol", "name", "currency",
     "grossAmount", "tax", "fee", "netAmount", "exchangeRate", "note",
     "createdAt", "updatedAt", "ticker", "amount", "amountTwd",
   ],
@@ -57,6 +57,17 @@ export type SupportedSheet = keyof typeof sheetHeaders;
 type GoogleErrorBody = {
   error?: { code?: number; message?: string };
 };
+
+export class GoogleSheetsApiError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+    readonly responseData: unknown,
+  ) {
+    super(message);
+    this.name = "GoogleSheetsApiError";
+  }
+}
 
 let cachedToken: { value: string; expiresAt: number } | null = null;
 const pendingSheetEnsures = new Map<SupportedSheet, Promise<SheetProperties>>();
@@ -164,14 +175,14 @@ async function googleRequest<T>(url: string, init?: RequestInit): Promise<T> {
   if (!response.ok) {
     const body = (await response.json().catch(() => ({}))) as GoogleErrorBody;
     const message = body.error?.message ?? response.statusText;
-    throw new Error(`Google Sheets API ${response.status}: ${message}`);
+    throw new GoogleSheetsApiError(
+      `Google Sheets API ${response.status}: ${message}`,
+      response.status,
+      body,
+    );
   }
 
   return (await response.json()) as T;
-}
-
-function quotedSheetName(name: string) {
-  return `'${name.replace(/'/g, "''")}'`;
 }
 
 async function getSheetMetadata(sheet: SupportedSheet) {
@@ -189,6 +200,7 @@ async function getSheetMetadata(sheet: SupportedSheet) {
 async function createOrFindSheet(sheet: SupportedSheet) {
   let properties = await getSheetMetadata(sheet);
   if (properties) {
+    await ensureHeaderRow(sheet);
     return properties;
   }
 
@@ -220,6 +232,20 @@ async function createOrFindSheet(sheet: SupportedSheet) {
   return properties;
 }
 
+async function ensureHeaderRow(sheet: SupportedSheet) {
+  const { spreadsheetId } = getConfig();
+  const range = encodeURIComponent(`${sheet}!A1:Z1`);
+  const result = await googleRequest<{ values?: unknown[][] }>(
+    `${SHEETS_API}/${encodeURIComponent(spreadsheetId)}/values/${range}`,
+  );
+  const hasHeaders = (result.values?.[0] ?? []).some(
+    (value) => String(value).trim() !== "",
+  );
+  if (!hasHeaders) {
+    await writeValues(sheet, "A1", [Array.from(sheetHeaders[sheet])]);
+  }
+}
+
 export async function ensureWorksheetExists(sheet: SupportedSheet) {
   const existingRequest = pendingSheetEnsures.get(sheet);
   if (existingRequest) return existingRequest;
@@ -236,7 +262,7 @@ export async function ensureWorksheetExists(sheet: SupportedSheet) {
 async function getValues(sheet: SupportedSheet) {
   await ensureWorksheetExists(sheet);
   const { spreadsheetId } = getConfig();
-  const range = encodeURIComponent(quotedSheetName(sheet));
+  const range = encodeURIComponent(`${sheet}!A:Z`);
   const result = await googleRequest<{ values?: unknown[][] }>(
     `${SHEETS_API}/${encodeURIComponent(spreadsheetId)}/values/${range}`,
   );
@@ -249,9 +275,13 @@ async function writeValues(
   values: unknown[][],
 ) {
   const { spreadsheetId } = getConfig();
-  const range = encodeURIComponent(`${quotedSheetName(sheet)}!${startCell}`);
+  const row = startCell.match(/^A(\d+)$/)?.[1];
+  if (!row) {
+    throw new Error(`Invalid write start cell: ${startCell}`);
+  }
+  const range = encodeURIComponent(`${sheet}!A${row}:Z${row}`);
   return googleRequest(
-    `${SHEETS_API}/${encodeURIComponent(spreadsheetId)}/values/${range}?valueInputOption=USER_ENTERED`,
+    `${SHEETS_API}/${encodeURIComponent(spreadsheetId)}/values/${range}?valueInputOption=RAW`,
     {
       method: "PUT",
       body: JSON.stringify({ values }),
@@ -292,9 +322,9 @@ export async function appendWorksheetRow(
   }
 
   const { spreadsheetId } = getConfig();
-  const range = encodeURIComponent(`${quotedSheetName(sheet)}!A:ZZ`);
+  const range = encodeURIComponent(`${sheet}!A:Z`);
   return googleRequest(
-    `${SHEETS_API}/${encodeURIComponent(spreadsheetId)}/values/${range}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`,
+    `${SHEETS_API}/${encodeURIComponent(spreadsheetId)}/values/${range}:append?valueInputOption=RAW&insertDataOption=INSERT_ROWS`,
     {
       method: "POST",
       body: JSON.stringify({
@@ -372,7 +402,7 @@ export async function replaceWorksheetRows(
   }
 
   const { spreadsheetId } = getConfig();
-  const range = encodeURIComponent(`${quotedSheetName(sheet)}!A:ZZ`);
+  const range = encodeURIComponent(`${sheet}!A:Z`);
   await googleRequest(
     `${SHEETS_API}/${encodeURIComponent(spreadsheetId)}/values/${range}:clear`,
     { method: "POST", body: "{}" },
