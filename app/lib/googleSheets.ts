@@ -1,6 +1,25 @@
-const SHEETS_API_URL = "/api/sheets";
+type SheetName =
+  | "transactions"
+  | "recurring_rules"
+  | "categories"
+  | "investment_trades"
+  | "investment_positions"
+  | "fx_records"
+  | "dividend_records"
+  | "cash_accounts"
+  | "cash_ledger";
 
-type SheetName = "transactions" | "recurring_rules" | "categories";
+const sheetApiRoutes: Record<SheetName, string> = {
+  transactions: "/api/google/transactions",
+  categories: "/api/google/categories",
+  recurring_rules: "/api/google/recurring",
+  investment_trades: "/api/google/investment-trades",
+  investment_positions: "/api/google/investment-positions",
+  fx_records: "/api/google/fx-records",
+  dividend_records: "/api/google/dividend-records",
+  cash_accounts: "/api/google/cash-accounts",
+  cash_ledger: "/api/google/cash-ledger",
+};
 
 export const recurringRuleColumns = [
   "id",
@@ -27,7 +46,7 @@ export type RecurringRuleSheetRow = Partial<
   Record<string, unknown>;
 
 async function requestSheet<T>(sheet: SheetName): Promise<T[]> {
-  const response = await fetch(`${SHEETS_API_URL}?sheet=${sheet}`, {
+  const response = await fetch(sheetApiRoutes[sheet], {
     method: "GET",
     cache: "no-store",
   });
@@ -45,25 +64,20 @@ async function createSheetRow<T extends Record<string, unknown>>(
   sheet: SheetName,
   data: T,
 ) {
-  return mutateSheetRow(sheet, {
-    action: "create",
-    ...data,
-  });
+  return mutateSheetRow(sheet, "POST", data);
 }
 
 async function mutateSheetRow<T extends Record<string, unknown>>(
   sheet: SheetName,
+  method: "POST" | "PUT" | "DELETE",
   data: T,
 ) {
-  const response = await fetch(SHEETS_API_URL, {
-    method: "POST",
+  const response = await fetch(sheetApiRoutes[sheet], {
+    method,
     headers: {
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({
-      sheet,
-      ...data,
-    }),
+    body: JSON.stringify(data),
   });
 
   if (!response.ok) {
@@ -85,18 +99,14 @@ export async function updateTransaction<T extends Record<string, unknown>>(
   id: string,
   data: T,
 ) {
-  return mutateSheetRow("transactions", {
-    action: "update",
+  return mutateSheetRow("transactions", "PUT", {
     id,
     ...data,
   });
 }
 
 export async function deleteTransaction(id: string) {
-  return mutateSheetRow("transactions", {
-    action: "delete",
-    id,
-  });
+  return mutateSheetRow("transactions", "DELETE", { id });
 }
 
 export function getRecurringRules<T = Record<string, unknown>>() {
@@ -111,18 +121,14 @@ export async function updateRecurringRule<T extends Record<string, unknown>>(
   id: string,
   data: T,
 ) {
-  return mutateSheetRow("recurring_rules", {
-    action: "update",
+  return mutateSheetRow("recurring_rules", "PUT", {
     id,
     ...data,
   });
 }
 
 export async function deleteRecurringRule(id: string) {
-  return mutateSheetRow("recurring_rules", {
-    action: "delete",
-    id,
-  });
+  return mutateSheetRow("recurring_rules", "DELETE", { id });
 }
 
 export function getCategories<T = Record<string, unknown>>() {
@@ -137,16 +143,66 @@ export async function updateCategory<T extends Record<string, unknown>>(
   id: string,
   data: T,
 ) {
-  return mutateSheetRow("categories", {
-    action: "update",
+  return mutateSheetRow("categories", "PUT", {
     id,
     ...data,
   });
 }
 
 export async function deleteCategory(id: string) {
-  return mutateSheetRow("categories", {
-    action: "delete",
-    id,
-  });
+  return mutateSheetRow("categories", "DELETE", { id });
 }
+
+function createCrudHelpers(sheet: SheetName) {
+  return {
+    get: <T = Record<string, unknown>>() => requestSheet<T>(sheet),
+    create: <T extends Record<string, unknown>>(data: T) =>
+      createSheetRow(sheet, data),
+    update: <T extends Record<string, unknown>>(id: string, data: T) =>
+      mutateSheetRow(sheet, "PUT", { id, ...data }),
+    delete: (id: string) =>
+      mutateSheetRow(sheet, "DELETE", { id }),
+  };
+}
+
+const investmentTrades = createCrudHelpers("investment_trades");
+export const getInvestmentTrades = investmentTrades.get;
+export const createInvestmentTrade = investmentTrades.create;
+export const updateInvestmentTrade = investmentTrades.update;
+export const deleteInvestmentTrade = investmentTrades.delete;
+
+const fxRecords = createCrudHelpers("fx_records");
+export const getFxRecords = fxRecords.get;
+export const createFxRecord = fxRecords.create;
+export const updateFxRecord = fxRecords.update;
+export const deleteFxRecord = fxRecords.delete;
+
+const dividendRecords = createCrudHelpers("dividend_records");
+export const getDividendRecords = dividendRecords.get;
+export const createDividendRecord = dividendRecords.create;
+export const updateDividendRecord = dividendRecords.update;
+export const deleteDividendRecord = dividendRecords.delete;
+
+export function getInvestmentPositions<T = Record<string, unknown>>() {
+  return requestSheet<T>("investment_positions");
+}
+
+export async function refreshInvestmentPositions() {
+  const response = await fetch(sheetApiRoutes.investment_positions, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: "{}",
+  });
+  if (!response.ok) throw new Error("Failed to refresh investment positions");
+  return response.json();
+}
+
+const cashAccounts = createCrudHelpers("cash_accounts");
+export const getCashAccounts = cashAccounts.get;
+export const createCashAccount = cashAccounts.create;
+export const updateCashAccount = cashAccounts.update;
+export const deleteCashAccount = cashAccounts.delete;
+
+const cashLedger = createCrudHelpers("cash_ledger");
+export const getCashLedger = cashLedger.get;
+export const createCashLedger = cashLedger.create;

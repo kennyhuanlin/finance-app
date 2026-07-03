@@ -9,6 +9,7 @@ import {
 } from "./data";
 import { dedupeCategories } from "./lib/categories";
 import { getCategories, getTransactions } from "./lib/googleSheets";
+import BottomNav from "./ui/bottom-nav";
 
 const periods = ["本月", "上月", "本季", "今年", "累積餘額"] as const;
 
@@ -842,38 +843,7 @@ export default function Home() {
 
       </section>
 
-      <nav className="fixed inset-x-0 bottom-0 z-20 border-t border-white/80 bg-white/85 px-5 pb-[max(0.9rem,env(safe-area-inset-bottom))] pt-3 shadow-[0_-12px_32px_rgba(15,23,42,0.08)] backdrop-blur-2xl sm:hidden">
-        <div className="mx-auto grid max-w-lg grid-cols-5">
-          {[
-            { label: "首頁", href: "/", icon: WalletIcon, active: true },
-            { label: "分類", href: "/categories", icon: CategoriesIcon, active: false },
-            { label: "記帳", href: "/add", icon: CardIcon, active: false },
-            { label: "固定支出", href: "/recurring", icon: RepeatIcon, active: false },
-            { label: "分析", href: "/analytics", icon: ChartIcon, active: false },
-          ].map((item) => {
-            const Icon = item.icon;
-
-            return (
-              <Link
-                key={item.label}
-                href={item.href}
-                className={`flex flex-col items-center gap-1 text-xs font-medium ${
-                  item.active ? "text-slate-950" : "text-slate-400"
-                }`}
-              >
-                <span
-                  className={`grid h-9 w-12 place-items-center rounded-full ${
-                    item.active ? "bg-slate-950 text-white" : "bg-transparent"
-                  }`}
-                >
-                  <Icon />
-                </span>
-                {item.label}
-              </Link>
-            );
-          })}
-        </div>
-      </nav>
+      <BottomNav active="home" />
     </main>
   );
 }

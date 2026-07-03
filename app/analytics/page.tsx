@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { dedupeCategories } from "../lib/categories";
 import { getCategories, getTransactions } from "../lib/googleSheets";
+import BottomNav from "../ui/bottom-nav";
 
 const periods = ["本月", "上月", "本季", "今年", "累積餘額"] as const;
 type Period = (typeof periods)[number];
@@ -759,40 +760,7 @@ export default function AnalyticsPage() {
         </section>
       </section>
 
-      <nav className="fixed inset-x-0 bottom-0 z-20 border-t border-white/80 bg-white/85 px-5 pb-[max(0.9rem,env(safe-area-inset-bottom))] pt-3 shadow-[0_-12px_32px_rgba(15,23,42,0.08)] backdrop-blur-2xl sm:hidden">
-        <div className="mx-auto grid max-w-lg grid-cols-5 text-xs font-medium">
-          <Link href="/" className="flex flex-col items-center gap-1 text-slate-400">
-            <span className="grid h-9 w-12 place-items-center rounded-full">
-              <WalletIcon />
-            </span>
-            首頁
-          </Link>
-          <Link href="/categories" className="flex flex-col items-center gap-1 text-slate-400">
-            <span className="grid h-9 w-12 place-items-center rounded-full">
-              <CategoriesIcon />
-            </span>
-            分類
-          </Link>
-          <Link href="/add" className="flex flex-col items-center gap-1 text-slate-400">
-            <span className="grid h-9 w-12 place-items-center rounded-full">
-              <CardIcon />
-            </span>
-            記帳
-          </Link>
-          <Link href="/recurring" className="flex flex-col items-center gap-1 text-slate-400">
-            <span className="grid h-9 w-12 place-items-center rounded-full">
-              <RepeatIcon />
-            </span>
-            固定支出
-          </Link>
-          <Link href="/analytics" className="flex flex-col items-center gap-1 text-slate-950">
-            <span className="grid h-9 w-12 place-items-center rounded-full bg-slate-950 text-white">
-              <ChartIcon />
-            </span>
-            分析
-          </Link>
-        </div>
-      </nav>
+      <BottomNav active="settings" />
     </main>
   );
 }
