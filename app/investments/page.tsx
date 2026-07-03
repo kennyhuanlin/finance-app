@@ -167,7 +167,7 @@ export default function InvestmentsPage() {
   const [saving, setSaving] = useState(false);
 
   async function load() {
-    const [tradeRows, positionRows, fxRows, dividendRows, accountRows, ledgerRows] = await Promise.all([
+    const results = await Promise.allSettled([
       getInvestmentTrades<Record<string, unknown>>(),
       getInvestmentPositions<Record<string, unknown>>(),
       getFxRecords<Record<string, unknown>>(),
@@ -175,19 +175,43 @@ export default function InvestmentsPage() {
       getCashAccounts<Record<string, unknown>>(),
       getCashLedger<Record<string, unknown>>(),
     ]);
-    setTrades(tradeRows.map(normalizeTrade));
-    setPositionSnapshots(positionRows.map(normalizePosition));
-    setFxRecords(fxRows.map(normalizeFx));
-    setDividends(dividendRows.map(normalizeDividend));
-    setCashAccounts(accountRows.map(normalizeAccount));
-    setCashLedger(ledgerRows.map(normalizeLedger));
+    const [tradeResult, positionResult, fxResult, dividendResult, accountResult, ledgerResult] = results;
+
+    if (tradeResult.status === "fulfilled") {
+      setTrades(tradeResult.value.map(normalizeTrade));
+    }
+    if (positionResult.status === "fulfilled") {
+      setPositionSnapshots(positionResult.value.map(normalizePosition));
+    }
+    if (fxResult.status === "fulfilled") {
+      setFxRecords(fxResult.value.map(normalizeFx));
+    }
+    if (dividendResult.status === "fulfilled") {
+      setDividends(dividendResult.value.map(normalizeDividend));
+    }
+    if (accountResult.status === "fulfilled") {
+      setCashAccounts(accountResult.value.map(normalizeAccount));
+    }
+    if (ledgerResult.status === "fulfilled") {
+      setCashLedger(ledgerResult.value.map(normalizeLedger));
+    }
+
+    return results.some((result) => result.status === "rejected");
   }
   useEffect(() => {
     const request = Promise.resolve().then(load);
     request
-      .then(() => setMessage(""))
+      .then((hasError) =>
+        setMessage(
+          hasError
+            ? "投資資料讀取失敗，請確認 Google Sheet 工作表與 Vercel 環境變數設定"
+            : "",
+        ),
+      )
       .catch(() =>
-        setMessage("投資資料讀取失敗，請確認工作表與 Apps Script 部署"),
+        setMessage(
+          "投資資料讀取失敗，請確認 Google Sheet 工作表與 Vercel 環境變數設定",
+        ),
       );
   }, []);
 

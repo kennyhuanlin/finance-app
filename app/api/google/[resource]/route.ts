@@ -26,6 +26,11 @@ const resourceSheets = {
 
 type Resource = keyof typeof resourceSheets;
 type Context = { params: Promise<{ resource: string }> };
+const legacyFallbackSheets = new Set<SupportedSheet>([
+  "transactions",
+  "categories",
+  "recurring_rules",
+]);
 
 function getSheet(resource: string) {
   if (!(resource in resourceSheets)) {
@@ -99,6 +104,10 @@ async function appsScriptFallback(
   });
 }
 
+function shouldUseAppsScriptFallback(sheet: SupportedSheet) {
+  return !hasServiceAccountConfig() && legacyFallbackSheets.has(sheet);
+}
+
 function errorResponse(error: unknown) {
   const status = error instanceof ApiError ? error.status : 500;
   return NextResponse.json(
@@ -111,7 +120,7 @@ export async function GET(_request: NextRequest, context: Context) {
   try {
     const { resource } = await context.params;
     const sheet = getSheet(resource);
-    if (!hasServiceAccountConfig()) {
+    if (shouldUseAppsScriptFallback(sheet)) {
       return appsScriptFallback("GET", sheet);
     }
     return NextResponse.json(await readWorksheet(sheet));
@@ -125,7 +134,7 @@ export async function POST(request: NextRequest, context: Context) {
     const { resource } = await context.params;
     const sheet = getSheet(resource);
     const body = await requestBody(request);
-    if (!hasServiceAccountConfig()) {
+    if (shouldUseAppsScriptFallback(sheet)) {
       return appsScriptFallback("POST", sheet, body);
     }
     if (sheet === "investment_positions") {
@@ -162,7 +171,7 @@ export async function PUT(request: NextRequest, context: Context) {
     const sheet = getSheet(resource);
     const body = await requestBody(request);
     const id = requireId(body);
-    if (!hasServiceAccountConfig()) {
+    if (shouldUseAppsScriptFallback(sheet)) {
       return appsScriptFallback("PUT", sheet, body);
     }
     const result = await updateWorksheetRow(sheet, id, body);
@@ -179,7 +188,7 @@ export async function DELETE(request: NextRequest, context: Context) {
     const sheet = getSheet(resource);
     const body = await requestBody(request);
     const id = requireId(body);
-    if (!hasServiceAccountConfig()) {
+    if (shouldUseAppsScriptFallback(sheet)) {
       return appsScriptFallback("DELETE", sheet, body);
     }
     const result = await deleteWorksheetRow(sheet, id);
