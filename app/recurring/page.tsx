@@ -119,8 +119,51 @@ function formatAmountDisplay(value: string) {
     : `${formattedInteger}.${decimalPart}`;
 }
 
-function todayString() {
-  return new Date().toISOString().slice(0, 10);
+function formatLocalDateOnly(date: Date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+
+  return `${year}-${month}-${day}`;
+}
+
+function normalizeDateOnly(value: unknown) {
+  if (value === undefined || value === null) {
+    return "";
+  }
+
+  const dateValue = String(value).trim();
+
+  if (!dateValue) {
+    return "";
+  }
+
+  const dateOnlyMatch = dateValue.match(/^(\d{4})[-/](\d{2})[-/](\d{2})$/);
+
+  if (dateOnlyMatch) {
+    const [, year, month, day] = dateOnlyMatch;
+    const localDate = new Date(Number(year), Number(month) - 1, Number(day));
+
+    if (
+      localDate.getFullYear() === Number(year) &&
+      localDate.getMonth() === Number(month) - 1 &&
+      localDate.getDate() === Number(day)
+    ) {
+      return `${year}-${month}-${day}`;
+    }
+
+    return "";
+  }
+
+  const parsedDate = new Date(dateValue);
+
+  return Number.isNaN(parsedDate.getTime())
+    ? ""
+    : formatLocalDateOnly(parsedDate);
+}
+
+function todayDateOnly() {
+  return formatLocalDateOnly(new Date());
 }
 
 function normalizeRemainingCount(value: unknown) {
@@ -144,7 +187,9 @@ function isValidRemainingCount(value: string) {
 }
 
 function hasExpiredEndDate(rule: { endDate: string }) {
-  return Boolean(rule.endDate) && rule.endDate < todayString();
+  const endDateDateOnly = normalizeDateOnly(rule.endDate);
+
+  return Boolean(endDateDateOnly) && endDateDateOnly < todayDateOnly();
 }
 
 function hasNoRemainingCount(rule: { remainingCount: string }) {
@@ -182,11 +227,13 @@ function getMonthlyAmount(rule: RecurringRule) {
 }
 
 function addPeriod(date: string, frequency: string) {
-  if (!date) {
+  const dateOnly = normalizeDateOnly(date);
+
+  if (!dateOnly) {
     return "";
   }
 
-  const [year, month, day] = date.split("-").map(Number);
+  const [year, month, day] = dateOnly.split("-").map(Number);
   const nextDate = new Date(year, month - 1, day);
 
   if (frequency === "daily") {
@@ -209,15 +256,19 @@ function addPeriod(date: string, frequency: string) {
 }
 
 function formatDate(date: string) {
-  if (!date) {
+  const dateOnly = normalizeDateOnly(date);
+
+  if (!dateOnly) {
     return "未設定";
   }
+
+  const [year, month, day] = dateOnly.split("-").map(Number);
 
   return new Intl.DateTimeFormat("zh-TW", {
     year: "numeric",
     month: "long",
     day: "numeric",
-  }).format(new Date(date));
+  }).format(new Date(year, month - 1, day));
 }
 
 function normalizeRecurringRule(
@@ -225,7 +276,7 @@ function normalizeRecurringRule(
   index: number,
 ): RecurringRule {
   const frequency = String(rule.frequency ?? "monthly");
-  const startDate = String(rule.startDate ?? todayString());
+  const startDate = normalizeDateOnly(rule.startDate) || todayDateOnly();
   const enabled =
     rule.enabled === true ||
     String(rule.enabled ?? "true").toLowerCase() === "true";
@@ -243,11 +294,12 @@ function normalizeRecurringRule(
     frequency,
     expenseType: String(rule.expenseType ?? "固定"),
     note: String(rule.note ?? ""),
-    lastRunDate: String(rule.lastRunDate ?? ""),
-    endDate: String(rule.endDate ?? ""),
+    lastRunDate: normalizeDateOnly(rule.lastRunDate),
+    endDate: normalizeDateOnly(rule.endDate),
     remainingCount: normalizeRemainingCount(rule.remainingCount),
     startDate,
-    nextRunDate: String(rule.nextRunDate ?? addPeriod(startDate, frequency)),
+    nextRunDate:
+      normalizeDateOnly(rule.nextRunDate) || addPeriod(startDate, frequency),
     status: enabled ? "active" : "paused",
     enabled,
     manualNextRunDate: false,
@@ -447,14 +499,14 @@ export default function RecurringPage() {
           status: "active",
           nextRunDate: rule.manualNextRunDate
             ? rule.nextRunDate
-            : addPeriod(todayString(), rule.frequency),
+            : addPeriod(todayDateOnly(), rule.frequency),
         };
       }),
     );
   }
 
   function openCreateForm() {
-    const startDate = todayString();
+    const startDate = todayDateOnly();
     const type = activeTab === "income" ? "收入" : "支出";
     const categoryOptions =
       activeTab === "income" ? incomeCategories : expenseCategories;
@@ -586,7 +638,7 @@ export default function RecurringPage() {
         status: "active",
         nextRunDate: current.manualNextRunDate
           ? current.nextRunDate
-          : addPeriod(todayString(), current.frequency),
+          : addPeriod(todayDateOnly(), current.frequency),
       };
     });
   }
