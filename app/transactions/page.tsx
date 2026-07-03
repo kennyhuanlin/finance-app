@@ -961,7 +961,7 @@ function TransactionsContent() {
             </div>
 
             {amountKeyboardOpen ? (
-              <div className="sticky bottom-0 -mx-5 -mb-5 mt-5 border-t border-slate-100 bg-white/95 px-5 pb-5 pt-3 backdrop-blur-xl">
+              <div className="-mx-5 mt-5 border-t border-slate-100 bg-white/95 px-5 pb-5 pt-3">
                 <div className="mb-3 flex items-center justify-between">
                   <p className="text-sm font-semibold text-slate-500">
                     輸入金額
@@ -1010,6 +1010,7 @@ function TransactionsContent() {
                 </div>
               </div>
             ) : null}
+            <div className="h-24" aria-hidden="true" />
           </form>
         </div>
       ) : null}

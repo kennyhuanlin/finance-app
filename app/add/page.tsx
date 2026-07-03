@@ -226,7 +226,7 @@ export default function AddRecordPage() {
     <main className="min-h-screen overflow-x-hidden bg-[#f6f7fb] text-slate-950">
       <div className="fixed inset-0 -z-10 bg-[radial-gradient(circle_at_0%_0%,#dbeafe_0,transparent_34%),radial-gradient(circle_at_100%_0%,#fce7f3_0,transparent_28%),linear-gradient(180deg,#fbfcff_0%,#eef2ff_100%)]" />
 
-      <section className="mx-auto flex w-full max-w-xl flex-col gap-5 px-4 pb-[calc(25rem+env(safe-area-inset-bottom))] pt-5 sm:px-6">
+      <section className="mx-auto flex w-full max-w-xl flex-col gap-5 px-4 pb-[calc(8rem+env(safe-area-inset-bottom))] pt-5 sm:px-6">
         <header className="flex items-center justify-between gap-4">
           <Link
             href="/"
@@ -394,7 +394,7 @@ export default function AddRecordPage() {
         </section>
       </section>
 
-      <div className="fixed inset-x-0 bottom-0 z-20 border-t border-white/80 bg-white/90 px-4 pb-[max(1rem,env(safe-area-inset-bottom))] pt-3 shadow-[0_-12px_32px_rgba(15,23,42,0.08)] backdrop-blur-2xl">
+      <div className="relative border-t border-white/80 bg-white/90 px-4 pt-3 pb-[calc(8rem+env(safe-area-inset-bottom))] shadow-[0_-12px_32px_rgba(15,23,42,0.08)]">
         <div className="mx-auto grid max-w-xl gap-3">
           <div className="grid grid-cols-3 gap-2">
             {calculatorKeys.map((key) => (
@@ -424,6 +424,7 @@ export default function AddRecordPage() {
           >
             {isSubmitting ? "儲存中..." : "新增紀錄"}
           </button>
+          <div className="h-24" aria-hidden="true" />
         </div>
       </div>
     </main>

@@ -609,7 +609,7 @@ export default function InvestmentsPage() {
         </RecordSection> : null}
       </section>
 
-      {editor ? <div className="fixed inset-0 z-40 overflow-y-auto bg-slate-950/35 p-4 backdrop-blur-sm"><div className="mx-auto mt-8 max-w-xl rounded-[30px] bg-white p-5 shadow-2xl">
+      {editor ? <div className="fixed inset-0 z-40 overflow-y-auto bg-slate-950/35 p-4 backdrop-blur-sm"><div className="mx-auto mt-8 max-h-[calc(100dvh-1.5rem)] max-w-xl overflow-y-auto rounded-[30px] bg-white px-5 pt-5 pb-[calc(8rem+env(safe-area-inset-bottom))] shadow-2xl">
         <div className="mb-5 flex items-center justify-between"><h2 className="text-xl font-semibold">{editor === "trade" ? "交易紀錄" : editor === "fx" ? "換匯紀錄" : editor === "dividend" ? "股息紀錄" : editor === "account" ? accountForm.id ? "編輯現金帳戶" : "新增現金帳戶" : "調整現金餘額"}</h2><button onClick={() => setEditor(null)} className="rounded-full bg-slate-100 px-3 py-2">✕</button></div>
         {editor === "trade" ? <form onSubmit={saveTrade} className="grid grid-cols-2 gap-3">
           <Field label="日期"><input required type="date" value={tradeForm.date} onChange={(e) => setTradeForm({...tradeForm,date:e.target.value})}/></Field>
@@ -687,7 +687,7 @@ function ResourceError({error}:{error?:ResourceErrorInfo}) {
   return <p className="mt-3 rounded-2xl bg-rose-50 px-4 py-3 text-sm font-medium text-rose-700">{error.resource} 讀取失敗 · status {error.status || "unknown"} · {error.message}</p>;
 }
 function Field({label,wide,children}:{label:string;wide?:boolean;children:React.ReactNode}){return <label className={`grid gap-1.5 text-sm font-medium text-slate-500 ${wide?"col-span-2":""}`}><span>{label}</span><div className="[&>*]:h-11 [&>*]:w-full [&>*]:rounded-xl [&>*]:border-0 [&>*]:bg-slate-100 [&>*]:px-3 [&>*]:text-slate-950 [&>*]:outline-none">{children}</div></label>;}
-function Submit({saving}:{saving:boolean}){return <button disabled={saving} className="col-span-2 mt-2 h-12 rounded-2xl bg-indigo-600 font-semibold text-white disabled:opacity-50">{saving?"儲存中…":"儲存"}</button>;}
+function Submit({saving}:{saving:boolean}){return <><button disabled={saving} className="col-span-2 mt-2 h-12 rounded-2xl bg-indigo-600 font-semibold text-white disabled:opacity-50">{saving?"儲存中…":"儲存"}</button><div className="col-span-2 h-24" aria-hidden="true"/></>;}
 function cashTypeLabel(type: CashLedger["type"]) {
   return {
     deposit: "存入", withdraw: "提領", fx_in: "換匯入帳", fx_out: "換匯扣款",

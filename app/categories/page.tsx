@@ -392,7 +392,7 @@ export default function CategoriesPage() {
         <div className="fixed inset-0 z-30 flex items-end bg-slate-950/30 px-3 pb-3 backdrop-blur-sm sm:items-center sm:justify-center">
           <form
             onSubmit={saveCategory}
-            className="w-full max-w-xl rounded-[32px] border border-white/80 bg-white p-5 shadow-2xl shadow-slate-950/20"
+            className="max-h-[calc(100dvh-1.5rem)] w-full max-w-xl overflow-y-auto rounded-[32px] border border-white/80 bg-white px-5 pt-5 pb-[calc(8rem+env(safe-area-inset-bottom))] shadow-2xl shadow-slate-950/20"
           >
             <div className="mb-5 flex items-center justify-between gap-4">
               <div>
@@ -506,6 +506,7 @@ export default function CategoriesPage() {
                 {isSavingCategory ? "儲存中..." : "儲存"}
               </button>
             </div>
+            <div className="h-24" aria-hidden="true" />
           </form>
         </div>
       ) : null}
