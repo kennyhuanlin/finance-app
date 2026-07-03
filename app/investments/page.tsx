@@ -192,6 +192,7 @@ export default function InvestmentsPage() {
   const [cashLedger, setCashLedger] = useState<CashLedger[]>([]);
   const [editor, setEditor] = useState<Editor>(null);
   const [tradeForm, setTradeForm] = useState(emptyTrade);
+  const [editingTradeId, setEditingTradeId] = useState<string | null>(null);
   const [fxForm, setFxForm] = useState(emptyFx);
   const [dividendForm, setDividendForm] = useState(emptyDividend);
   const [accountForm, setAccountForm] = useState(emptyAccount);
@@ -288,6 +289,7 @@ export default function InvestmentsPage() {
 
   function openTrade(item?: InvestmentTrade) {
     setTradeForm(item ? { ...item, quantity: String(item.quantity), price: String(item.price), fee: String(item.fee), tax: String(item.tax), exchangeRate: String(item.exchangeRate) } : emptyTrade());
+    setEditingTradeId(item?.id || null);
     setEditor("trade");
   }
   function openFx(item?: FxRecord) {
@@ -400,6 +402,7 @@ export default function InvestmentsPage() {
   async function saveTrade(event: React.FormEvent) {
     event.preventDefault(); setSaving(true);
     const stamp = nowIso();
+    const tradeId = editingTradeId || `trade-${Date.now()}`;
     const payload: InvestmentTrade = {
       ...tradeForm,
       tradeDate: tradeForm.date,
@@ -415,13 +418,30 @@ export default function InvestmentsPage() {
       quantity: number(tradeForm.quantity), price: number(tradeForm.price), fee: number(tradeForm.fee),
       tax: number(tradeForm.tax), exchangeRate: number(tradeForm.exchangeRate),
       totalAmount: calculateTradeTotal(tradeForm.market, tradeForm.side, number(tradeForm.quantity), number(tradeForm.price), number(tradeForm.fee), number(tradeForm.tax)),
-      id: tradeForm.id || `trade-${Date.now()}`, createdAt: tradeForm.createdAt || stamp, updatedAt: stamp,
+      id: tradeId, createdAt: tradeForm.createdAt || stamp, updatedAt: stamp,
     };
     try {
-      if (tradeForm.id) await updateInvestmentTrade(tradeForm.id, payload);
+      if (editingTradeId) await updateInvestmentTrade(editingTradeId, payload);
       else await createInvestmentTrade(payload);
-      await load(); setEditor(null); setMessage("交易已儲存");
-    } catch { setMessage("交易儲存失敗"); } finally { setSaving(false); }
+      await load();
+      setEditingTradeId(null);
+      setEditor(null);
+      setMessage(editingTradeId ? "交易已更新" : "交易已新增");
+    } catch (error) {
+      const status = error instanceof SheetRequestError ? error.status : 0;
+      const errorMessage =
+        error instanceof Error ? error.message : "Unknown request error";
+      console.error("Investment trade save failed", {
+        resource: "investment_trades",
+        id: tradeId,
+        status,
+        message: errorMessage,
+        error,
+      });
+      setMessage(
+        `investment_trades · status ${status || "unknown"} · ${errorMessage}`,
+      );
+    } finally { setSaving(false); }
   }
   async function saveFx(event: React.FormEvent) {
     event.preventDefault(); setSaving(true); const stamp = nowIso();

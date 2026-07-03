@@ -3,6 +3,7 @@ import {
   appendWorksheetRow,
   deleteWorksheetRow,
   ensureWorksheetExists,
+  ensureWorksheetRowIds,
   GoogleSheetsApiError,
   hasServiceAccountConfig,
   readWorksheet,
@@ -125,6 +126,9 @@ async function readSheetWithRetry(sheet: SupportedSheet) {
   for (let attempt = 0; ; attempt += 1) {
     try {
       await ensureWorksheetExists(sheet);
+      if (sheet === "investment_trades") {
+        await ensureWorksheetRowIds(sheet, "trade");
+      }
       return await readWorksheet(sheet);
     } catch (error) {
       const shouldRetry =
@@ -142,6 +146,7 @@ function errorResponse(
   error: unknown,
   resource: string,
   sheetName: string,
+  id = "",
 ) {
   const range = sheetName ? `${sheetName}!A:Z` : "";
   const errorMessage =
@@ -153,18 +158,21 @@ function errorResponse(
       ? error.status
       : error instanceof GoogleSheetsApiError
         ? error.status
+        : errorMessage.includes("was not found")
+          ? 404
         : 500;
 
   console.error("Google Sheets API route failed", {
     resource,
     sheetName,
+    id,
     range,
     message: errorMessage,
     responseData,
   });
 
   return NextResponse.json(
-    { error: errorMessage, resource, sheetName, range },
+    { error: errorMessage, resource, sheetName, id, status, range },
     { status },
   );
 }
@@ -226,11 +234,13 @@ export async function POST(request: NextRequest, context: Context) {
 export async function PUT(request: NextRequest, context: Context) {
   const { resource } = await context.params;
   let sheetName = "";
+  let recordId = "";
   try {
     const sheet = getSheet(resource);
     sheetName = sheet;
     const body = await requestBody(request);
     const id = requireId(body);
+    recordId = id;
     if (shouldUseAppsScriptFallback()) {
       return appsScriptFallback("PUT", sheet, body);
     }
@@ -239,18 +249,20 @@ export async function PUT(request: NextRequest, context: Context) {
     const sync = await syncDerivedSheets(sheet);
     return NextResponse.json({ ...result, sync });
   } catch (error) {
-    return errorResponse(error, resource, sheetName);
+    return errorResponse(error, resource, sheetName, recordId);
   }
 }
 
 export async function DELETE(request: NextRequest, context: Context) {
   const { resource } = await context.params;
   let sheetName = "";
+  let recordId = "";
   try {
     const sheet = getSheet(resource);
     sheetName = sheet;
     const body = await requestBody(request);
     const id = requireId(body);
+    recordId = id;
     if (shouldUseAppsScriptFallback()) {
       return appsScriptFallback("DELETE", sheet, body);
     }
@@ -259,7 +271,7 @@ export async function DELETE(request: NextRequest, context: Context) {
     const sync = await syncDerivedSheets(sheet);
     return NextResponse.json({ ...result, sync });
   } catch (error) {
-    return errorResponse(error, resource, sheetName);
+    return errorResponse(error, resource, sheetName, recordId);
   }
 }
 

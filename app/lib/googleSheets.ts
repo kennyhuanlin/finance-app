@@ -106,7 +106,16 @@ async function mutateSheetRow<T extends Record<string, unknown>>(
   });
 
   if (!response.ok) {
-    throw new Error(`Failed to mutate ${sheet} row`);
+    const body = (await response.json().catch(() => null)) as {
+      error?: string;
+      resource?: string;
+      id?: string;
+    } | null;
+    throw new SheetRequestError(
+      sheet,
+      response.status,
+      body?.error ?? `Failed to mutate ${sheet} row`,
+    );
   }
 
   return response.json();

@@ -279,7 +279,9 @@ async function writeValues(
   if (!row) {
     throw new Error(`Invalid write start cell: ${startCell}`);
   }
-  const range = encodeURIComponent(`${sheet}!A${row}:Z${row}`);
+  const startRow = Number(row);
+  const endRow = startRow + Math.max(values.length, 1) - 1;
+  const range = encodeURIComponent(`${sheet}!A${startRow}:Z${endRow}`);
   return googleRequest(
     `${SHEETS_API}/${encodeURIComponent(spreadsheetId)}/values/${range}?valueInputOption=RAW`,
     {
@@ -309,6 +311,30 @@ export async function readWorksheet(sheet: SupportedSheet) {
     throw new Error(`Worksheet "${sheet}" has no header row`);
   }
   return table.rows;
+}
+
+export async function ensureWorksheetRowIds(
+  sheet: SupportedSheet,
+  prefix: string,
+) {
+  const values = await getValues(sheet);
+  const { headers, rows } = mapRows(values);
+  const idColumn = headers.indexOf("id");
+  if (idColumn < 0) {
+    throw new Error(`Worksheet "${sheet}" is missing the "id" header`);
+  }
+
+  let updated = 0;
+  for (let index = 0; index < rows.length; index += 1) {
+    if (String(rows[index].id ?? "").trim()) continue;
+    const id = `${prefix}-legacy-row-${index + 2}`;
+    const next: Record<string, unknown> = { ...rows[index], id };
+    await writeValues(sheet, `A${index + 2}`, [
+      headers.map((header) => normalizeCell(next[header])),
+    ]);
+    updated += 1;
+  }
+  return updated;
 }
 
 export async function appendWorksheetRow(
