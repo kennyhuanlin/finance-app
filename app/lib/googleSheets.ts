@@ -45,6 +45,17 @@ export type RecurringRuleSheetRow = Partial<
 > &
   Record<string, unknown>;
 
+export class SheetRequestError extends Error {
+  constructor(
+    readonly resource: SheetName,
+    readonly status: number,
+    message: string,
+  ) {
+    super(message);
+    this.name = "SheetRequestError";
+  }
+}
+
 async function requestSheet<T>(sheet: SheetName): Promise<T[]> {
   const response = await fetch(sheetApiRoutes[sheet], {
     method: "GET",
@@ -52,12 +63,26 @@ async function requestSheet<T>(sheet: SheetName): Promise<T[]> {
   });
 
   if (!response.ok) {
-    throw new Error(`Failed to fetch ${sheet}`);
+    const body = (await response.json().catch(() => null)) as {
+      error?: string;
+    } | null;
+    throw new SheetRequestError(
+      sheet,
+      response.status,
+      body?.error ?? `Failed to fetch ${sheet}`,
+    );
   }
 
-  const data = await response.json();
+  const data = (await response.json().catch(() => [])) as
+    | T[]
+    | { data?: T[] }
+    | null;
 
-  return Array.isArray(data) ? data : data.data ?? [];
+  return Array.isArray(data)
+    ? data
+    : Array.isArray(data?.data)
+      ? data.data
+      : [];
 }
 
 async function createSheetRow<T extends Record<string, unknown>>(

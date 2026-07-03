@@ -117,6 +117,27 @@ function shouldUseAppsScriptFallback() {
   return !hasServiceAccountConfig();
 }
 
+const RETRYABLE_GOOGLE_STATUSES = new Set([429, 500, 503]);
+
+async function readSheetWithRetry(sheet: SupportedSheet) {
+  const retryDelays = [500, 1000];
+
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      await ensureWorksheetExists(sheet);
+      return await readWorksheet(sheet);
+    } catch (error) {
+      const shouldRetry =
+        error instanceof GoogleSheetsApiError &&
+        RETRYABLE_GOOGLE_STATUSES.has(error.status) &&
+        attempt < retryDelays.length;
+
+      if (!shouldRetry) throw error;
+      await new Promise((resolve) => setTimeout(resolve, retryDelays[attempt]));
+    }
+  }
+}
+
 function errorResponse(
   error: unknown,
   resource: string,
@@ -157,8 +178,7 @@ export async function GET(_request: NextRequest, context: Context) {
     if (shouldUseAppsScriptFallback()) {
       return appsScriptFallback("GET", sheet);
     }
-    await ensureWorksheetExists(sheet);
-    return NextResponse.json(await readWorksheet(sheet));
+    return NextResponse.json(await readSheetWithRetry(sheet));
   } catch (error) {
     return errorResponse(error, resource, sheetName);
   }

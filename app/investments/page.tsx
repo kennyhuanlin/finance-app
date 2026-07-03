@@ -35,6 +35,7 @@ import {
   getFxRecords,
   getInvestmentTrades,
   getInvestmentPositions,
+  SheetRequestError,
   updateCashAccount,
   updateDividendRecord,
   updateFxRecord,
@@ -43,6 +44,18 @@ import {
 
 type Tab = "overview" | "trades" | "positions" | "cash" | "fx" | "dividends";
 type Editor = "trade" | "fx" | "dividend" | "account" | "adjustment" | null;
+type InvestmentResource =
+  | "investment_trades"
+  | "investment_positions"
+  | "fx_records"
+  | "dividend_records"
+  | "cash_accounts"
+  | "cash_ledger";
+type ResourceErrorInfo = {
+  resource: InvestmentResource;
+  status: number;
+  message: string;
+};
 const tabs: { id: Tab; label: string }[] = [
   { id: "overview", label: "總覽" },
   { id: "trades", label: "買賣紀錄" },
@@ -186,6 +199,9 @@ export default function InvestmentsPage() {
   const [message, setMessage] = useState("正在讀取投資資料…");
   const [saving, setSaving] = useState(false);
   const [fxRateManual, setFxRateManual] = useState(false);
+  const [resourceErrors, setResourceErrors] = useState<
+    Partial<Record<InvestmentResource, ResourceErrorInfo>>
+  >({});
 
   async function load() {
     const results = await Promise.allSettled([
@@ -197,6 +213,29 @@ export default function InvestmentsPage() {
       getCashLedger<Record<string, unknown>>(),
     ]);
     const [tradeResult, positionResult, fxResult, dividendResult, accountResult, ledgerResult] = results;
+    const resources: InvestmentResource[] = [
+      "investment_trades",
+      "investment_positions",
+      "fx_records",
+      "dividend_records",
+      "cash_accounts",
+      "cash_ledger",
+    ];
+    const nextErrors: Partial<
+      Record<InvestmentResource, ResourceErrorInfo>
+    > = {};
+    results.forEach((result, index) => {
+      if (result.status !== "rejected") return;
+      const resource = resources[index];
+      const reason = result.reason;
+      nextErrors[resource] = {
+        resource,
+        status: reason instanceof SheetRequestError ? reason.status : 0,
+        message:
+          reason instanceof Error ? reason.message : "Unknown request error",
+      };
+    });
+    setResourceErrors(nextErrors);
 
     if (tradeResult.status === "fulfilled") {
       setTrades(tradeResult.value.map(normalizeTrade));
@@ -217,22 +256,14 @@ export default function InvestmentsPage() {
       setCashLedger(ledgerResult.value.map(normalizeLedger));
     }
 
-    return results.some((result) => result.status === "rejected");
+    return nextErrors;
   }
   useEffect(() => {
     const request = Promise.resolve().then(load);
     request
-      .then((hasError) =>
-        setMessage(
-          hasError
-            ? "投資資料讀取失敗，請確認 Google Sheet 工作表與 Vercel 環境變數設定"
-            : "",
-        ),
-      )
-      .catch(() =>
-        setMessage(
-          "投資資料讀取失敗，請確認 Google Sheet 工作表與 Vercel 環境變數設定",
-        ),
+      .then(() => setMessage(""))
+      .catch((error) =>
+        setMessage(error instanceof Error ? error.message : "投資資料讀取失敗"),
       );
   }, []);
 
@@ -512,6 +543,13 @@ export default function InvestmentsPage() {
           <p className="mt-2 text-sm text-slate-500">台股、美股、換匯與股息集中管理</p>
         </header>
         {message ? <p className="rounded-2xl bg-indigo-50 px-4 py-3 text-sm font-medium text-indigo-700">{message}</p> : null}
+        {tab === "overview" && Object.keys(resourceErrors).length ? (
+          <div className="grid gap-2">
+            {Object.values(resourceErrors).map((error) =>
+              error ? <ResourceError key={error.resource} error={error} /> : null,
+            )}
+          </div>
+        ) : null}
         <div className="flex gap-2 overflow-x-auto pb-1">
           {tabs.map((item) => <button key={item.id} onClick={() => setTab(item.id)} className={`shrink-0 rounded-full px-4 py-2.5 text-sm font-semibold ${tab === item.id ? "bg-slate-950 text-white" : "bg-white text-slate-500"}`}>{item.label}</button>)}
         </div>
@@ -529,15 +567,17 @@ export default function InvestmentsPage() {
           <p className="col-span-2 px-1 text-xs text-slate-400 lg:col-span-3">美元換算匯率：{latestUsdTwdRate.toFixed(4)}；股票資產暫以持有成本估算。</p>
         </div> : null}
 
-        {tab === "trades" ? <RecordSection title="買賣紀錄" action={() => openTrade()}>
+        {tab === "trades" ? <RecordSection title="買賣紀錄" action={() => openTrade()} error={resourceErrors.investment_trades}>
           {trades.slice().sort((a,b) => b.date.localeCompare(a.date)).map((item) => <RecordRow key={item.id} title={`${item.symbol} ${item.name}`} meta={`${item.date} · ${item.market} · ${item.side === "buy" ? "買入" : "賣出"} ${item.quantity} ${item.market === "TW" ? "張" : "股"}`} amount={`${item.side === "buy" ? "-" : "+"}${formatInvestmentMoney(item.totalAmount, item.currency)}`} onEdit={() => openTrade(item)} onDelete={() => remove("trade", item.id)} />)}
         </RecordSection> : null}
 
-        {tab === "positions" ? <section className={card}><h2 className="text-xl font-semibold">庫存持股</h2><div className="mt-3 divide-y divide-slate-100">
+        {tab === "positions" ? <section className={card}><h2 className="text-xl font-semibold">庫存持股</h2><ResourceError error={resourceErrors.investment_positions}/><div className="mt-3 divide-y divide-slate-100">
           {positions.length ? positions.map((item) => <div key={`${item.market}-${item.ticker}`} className="grid gap-2 py-4 sm:grid-cols-[1fr_auto]"><div><p className="font-semibold">{item.ticker} <span className="font-normal text-slate-500">{item.name}</span></p><p className="mt-1 text-xs text-slate-400">{item.market} · {item.quantity} 股 · 均價 {formatInvestmentMoney(item.averageCost, item.currency)}</p></div><p className="font-semibold">{formatInvestmentMoney(item.totalCost, item.currency)}</p></div>) : <Empty />}
         </div></section> : null}
 
         {tab === "cash" ? <section className="grid gap-4">
+          <ResourceError error={resourceErrors.cash_accounts}/>
+          <ResourceError error={resourceErrors.cash_ledger}/>
           {(["TWD", "USD"] as const).filter((currency) => !cashAccounts.some((item) => item.currency === currency)).map((currency) => (
             <button key={currency} onClick={() => openAccount(currency)} className="rounded-2xl bg-amber-50 px-4 py-3 text-left text-sm font-medium text-amber-700">
               請先建立對應幣別現金帳戶（{currency}） →
@@ -560,11 +600,11 @@ export default function InvestmentsPage() {
           </div>
         </section> : null}
 
-        {tab === "fx" ? <RecordSection title="換匯紀錄" action={() => openFx()}>
+        {tab === "fx" ? <RecordSection title="換匯紀錄" action={() => openFx()} error={resourceErrors.fx_records}>
           {fxRecords.slice().sort((a,b) => b.date.localeCompare(a.date)).map((item) => <RecordRow key={item.id} title={`${item.fromCurrency} → ${item.toCurrency}`} meta={`${item.date} · 匯率 ${item.exchangeRate}`} amount={`${formatInvestmentMoney(item.fromAmount, item.fromCurrency)} → ${formatInvestmentMoney(item.toAmount, item.toCurrency)}`} onEdit={() => openFx(item)} onDelete={() => remove("fx", item.id)} />)}
         </RecordSection> : null}
 
-        {tab === "dividends" ? <RecordSection title="股息紀錄" action={() => openDividend()}>
+        {tab === "dividends" ? <RecordSection title="股息紀錄" action={() => openDividend()} error={resourceErrors.dividend_records}>
           {dividends.slice().sort((a,b) => b.date.localeCompare(a.date)).map((item) => <RecordRow key={item.id} title={`${item.ticker} ${item.name}`} meta={`${item.date} · 原幣 ${formatInvestmentMoney(item.amount, item.currency)} · 稅 ${formatInvestmentMoney(item.tax, item.currency)}`} amount={formatInvestmentMoney(item.amountTwd, "TWD")} onEdit={() => openDividend(item)} onDelete={() => remove("dividend", item.id)} />)}
         </RecordSection> : null}
       </section>
@@ -635,13 +675,17 @@ export default function InvestmentsPage() {
   );
 }
 
-function RecordSection({title,action,children}:{title:string;action:()=>void;children:React.ReactNode}) {
-  return <section className="rounded-[28px] border border-white/80 bg-white/85 p-5 shadow-sm shadow-slate-200/80"><div className="flex items-center justify-between"><h2 className="text-xl font-semibold">{title}</h2><button onClick={action} className="rounded-full bg-slate-950 px-4 py-2 text-sm font-semibold text-white">＋ 新增</button></div><div className="mt-3 divide-y divide-slate-100">{children || <Empty />}</div></section>;
+function RecordSection({title,action,error,children}:{title:string;action:()=>void;error?:ResourceErrorInfo;children:React.ReactNode}) {
+  return <section className="rounded-[28px] border border-white/80 bg-white/85 p-5 shadow-sm shadow-slate-200/80"><div className="flex items-center justify-between"><h2 className="text-xl font-semibold">{title}</h2><button onClick={action} className="rounded-full bg-slate-950 px-4 py-2 text-sm font-semibold text-white">＋ 新增</button></div><ResourceError error={error}/><div className="mt-3 divide-y divide-slate-100">{children || <Empty />}</div></section>;
 }
 function RecordRow({title,meta,amount,onEdit,onDelete}:{title:string;meta:string;amount:string;onEdit:()=>void;onDelete:()=>void}) {
   return <div className="flex flex-wrap items-center gap-3 py-4"><div className="min-w-0 flex-1 basis-40"><p className="truncate font-semibold">{title}</p><p className="mt-1 truncate text-xs text-slate-400">{meta}</p></div><p className="shrink-0 text-sm font-semibold">{amount}</p><div className="flex w-full justify-end gap-1 sm:w-auto"><button type="button" onClick={onEdit} className="flex items-center gap-1 rounded-full bg-slate-100 px-3 py-1.5 text-xs font-semibold text-slate-600"><Pencil size={14} strokeWidth={2.2}/> 編輯</button><button type="button" onClick={onDelete} className="flex items-center gap-1 rounded-full bg-rose-50 px-3 py-1.5 text-xs font-semibold text-rose-600"><Trash2 size={14} strokeWidth={2.2}/> 刪除</button></div></div>;
 }
 function Empty(){return <p className="py-8 text-center text-sm text-slate-400">尚無資料</p>;}
+function ResourceError({error}:{error?:ResourceErrorInfo}) {
+  if (!error) return null;
+  return <p className="mt-3 rounded-2xl bg-rose-50 px-4 py-3 text-sm font-medium text-rose-700">{error.resource} 讀取失敗 · status {error.status || "unknown"} · {error.message}</p>;
+}
 function Field({label,wide,children}:{label:string;wide?:boolean;children:React.ReactNode}){return <label className={`grid gap-1.5 text-sm font-medium text-slate-500 ${wide?"col-span-2":""}`}><span>{label}</span><div className="[&>*]:h-11 [&>*]:w-full [&>*]:rounded-xl [&>*]:border-0 [&>*]:bg-slate-100 [&>*]:px-3 [&>*]:text-slate-950 [&>*]:outline-none">{children}</div></label>;}
 function Submit({saving}:{saving:boolean}){return <button disabled={saving} className="col-span-2 mt-2 h-12 rounded-2xl bg-indigo-600 font-semibold text-white disabled:opacity-50">{saving?"儲存中…":"儲存"}</button>;}
 function cashTypeLabel(type: CashLedger["type"]) {
