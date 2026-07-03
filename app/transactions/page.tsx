@@ -2,10 +2,11 @@
 
 import { Suspense, useEffect, useState } from "react";
 import Link from "next/link";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useCategories } from "../categories-context";
 import { formatCategoryLabel } from "../lib/categories";
 import {
+  createTransaction,
   deleteTransaction as deleteSheetTransaction,
   getTransactions,
   updateTransaction,
@@ -31,7 +32,7 @@ type TransactionForm = Omit<Transaction, "amount"> & {
   amount: string;
 };
 
-const typeOptions = ["支出", "收入"];
+const typeOptions = ["支出", "收入", "transfer"];
 const necessityOptions = ["必要", "非必要"];
 const calculatorKeys = ["1", "2", "3", "4", "5", "6", "7", "8", "9", ".", "0"];
 const TRANSACTIONS_PAGE_SIZE = 10;
@@ -250,9 +251,12 @@ function BackIcon() {
 }
 
 function TransactionsContent() {
+  const router = useRouter();
   const searchParams = useSearchParams();
   const typeParam = searchParams.get("type");
   const periodParam = searchParams.get("period");
+  const actionParam = searchParams.get("action");
+  const newTransactionType = searchParams.get("new");
   const { categories } = useCategories();
   const expenseCategories = categories.filter((item) => item.type === "expense");
   const incomeCategories = categories.filter((item) => item.type === "income");
@@ -300,6 +304,18 @@ function TransactionsContent() {
       isMounted = false;
     };
   }, []);
+
+  useEffect(() => {
+    if (
+      newTransactionType === "expense" ||
+      newTransactionType === "income" ||
+      newTransactionType === "transfer"
+    ) {
+      openNewForm(newTransactionType);
+    } else if (actionParam === "add") {
+      openNewForm("expense");
+    }
+  }, [actionParam, newTransactionType]);
 
   const categoryOptions =
     editingTransaction?.type === "收入"
@@ -410,6 +426,47 @@ function TransactionsContent() {
     setAmountKeyboardOpen(true);
   }
 
+  function openNewForm(
+    preset: "expense" | "income" | "transfer" = "expense",
+  ) {
+    const isIncome = preset === "income";
+    const nextType = isIncome
+      ? "收入"
+      : preset === "transfer"
+        ? "transfer"
+        : "支出";
+    const nextCategory = isIncome
+      ? incomeCategories[0]
+      : expenseCategories[0];
+    setMessage("");
+    setEditingTransaction({
+      id: "",
+      date: toDateKey(new Date()),
+      type: nextType,
+      category: nextCategory?.name ?? "",
+      categoryId: nextCategory?.id,
+      amount: "",
+      note: "",
+      sourceType: "manual",
+      recurringId: null,
+      expenseType: "",
+      nature: "",
+      necessity: preset === "expense" ? "必要" : "",
+      createdAt: undefined,
+    });
+    setAmountKeyboardOpen(true);
+  }
+
+  function closeTransactionForm() {
+    setEditingTransaction(null);
+    setAmountKeyboardOpen(false);
+    const nextSearchParams = new URLSearchParams(searchParams.toString());
+    nextSearchParams.delete("action");
+    nextSearchParams.delete("new");
+    const query = nextSearchParams.toString();
+    router.replace(query ? `/transactions?${query}` : "/transactions");
+  }
+
   function updateEditingTransaction<K extends keyof TransactionForm>(
     key: K,
     value: TransactionForm[K],
@@ -437,7 +494,8 @@ function TransactionsContent() {
                   ?.id,
           nature: "",
           expenseType: "",
-          necessity: nextType === "收入" ? "" : "必要",
+          necessity:
+            nextType === "收入" || nextType === "transfer" ? "" : "必要",
         };
       }
 
@@ -510,8 +568,11 @@ function TransactionsContent() {
     const isExpense =
       editingTransaction.type === "支出" ||
       editingTransaction.type === "expense";
+    const isCreating = editingTransaction.id === "";
     const nextTransaction: Transaction = {
       ...editingTransaction,
+      id: editingTransaction.id || `tx-${Date.now()}`,
+      createdAt: editingTransaction.createdAt || new Date().toISOString(),
       note: editingTransaction.note.trim(),
       amount: Number(editingTransaction.amount),
       expenseType: "",
@@ -523,7 +584,7 @@ function TransactionsContent() {
     setMessage("");
 
     try {
-      await updateTransaction(nextTransaction.id, {
+      const sheetPayload = {
         id: nextTransaction.id,
         createdAt: nextTransaction.createdAt ?? "",
         date: nextTransaction.date,
@@ -537,11 +598,16 @@ function TransactionsContent() {
         note: nextTransaction.note,
         sourceType: nextTransaction.sourceType,
         recurringId: nextTransaction.recurringId ?? "",
-      });
+        updatedAt: new Date().toISOString(),
+      };
+      if (isCreating) {
+        await createTransaction(sheetPayload);
+      } else {
+        await updateTransaction(nextTransaction.id, sheetPayload);
+      }
       await fetchTransactions();
-      setEditingTransaction(null);
-      setAmountKeyboardOpen(false);
-      setMessage("交易已儲存");
+      closeTransactionForm();
+      setMessage(isCreating ? "交易已新增" : "交易已儲存");
     } catch {
       setMessage("交易儲存失敗，請稍後再試");
     } finally {
@@ -646,12 +712,13 @@ function TransactionsContent() {
                 </span>
               </p>
             </div>
-            <Link
-              href="/add"
+            <button
+              type="button"
+              onClick={() => openNewForm("expense")}
               className="rounded-full bg-slate-950 px-4 py-2 text-sm font-medium text-white shadow-lg shadow-slate-300/80 transition hover:bg-slate-800"
             >
               新增
-            </Link>
+            </button>
           </div>
 
           <div className="mt-5 divide-y divide-slate-100">
@@ -762,15 +829,12 @@ function TransactionsContent() {
               <div>
                 <p className="text-sm font-medium text-slate-500">交易紀錄</p>
                 <h2 className="mt-1 text-2xl font-semibold tracking-normal">
-                  編輯交易
+                  {editingTransaction.id ? "編輯交易" : "新增交易"}
                 </h2>
               </div>
               <button
                 type="button"
-                onClick={() => {
-                  setEditingTransaction(null);
-                  setAmountKeyboardOpen(false);
-                }}
+                onClick={closeTransactionForm}
                 className="grid h-10 w-10 place-items-center rounded-full bg-slate-100 text-lg font-semibold text-slate-500"
                 aria-label="關閉"
               >
@@ -803,7 +867,7 @@ function TransactionsContent() {
                   >
                     {typeOptions.map((item, index) => (
                       <option key={`${item}-${index}`} value={item}>
-                        {item}
+                        {item === "transfer" ? "轉帳" : item}
                       </option>
                     ))}
                   </select>
@@ -881,10 +945,7 @@ function TransactionsContent() {
             <div className="mt-5 grid grid-cols-2 gap-3">
               <button
                 type="button"
-                onClick={() => {
-                  setEditingTransaction(null);
-                  setAmountKeyboardOpen(false);
-                }}
+                onClick={closeTransactionForm}
                 disabled={isSavingTransaction}
                 className="h-13 rounded-full bg-slate-100 text-base font-semibold text-slate-600 disabled:text-slate-400"
               >
