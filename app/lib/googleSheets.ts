@@ -226,6 +226,39 @@ export async function getInvestmentBundle(force = false) {
   return request;
 }
 
+export class InvestmentSyncError extends Error {
+  constructor(
+    readonly resource: string,
+    readonly status: number,
+    message: string,
+  ) {
+    super(message);
+    this.name = "InvestmentSyncError";
+  }
+}
+
+export async function syncInvestments() {
+  const response = await fetch("/api/google/investments/sync", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+  });
+  const body = (await response.json().catch(() => null)) as {
+    error?: string;
+    resource?: string;
+    status?: number;
+    message?: string;
+  } | null;
+  if (!response.ok) {
+    throw new InvestmentSyncError(
+      body?.resource ?? "investments",
+      body?.status ?? response.status,
+      body?.error ?? "Investment sync failed",
+    );
+  }
+  clearInvestmentBundleCache();
+  return body;
+}
+
 export function getTransactions<T = Record<string, unknown>>() {
   return requestSheet<T>("transactions");
 }

@@ -10,8 +10,10 @@ export type InvestmentTrade = {
   symbol: string;
   ticker: string;
   name: string;
+  type?: string;
   side: TradeSide;
   quantity: number;
+  unit?: string;
   price: number;
   fee: number;
   tax: number;
@@ -150,6 +152,30 @@ export function calculateTradeTotal(
     : subtotal - fee - tax;
 }
 
+export function isStockDividendTrade(trade: {
+  type?: string;
+}) {
+  const type = String(trade.type ?? "").trim().toLowerCase();
+  return (
+    type === "stock_dividend" ||
+    type === "dividend_stock" ||
+    type === "配股"
+  );
+}
+
+export function getTradeShareQuantity(trade: {
+  market: Market;
+  quantity: number;
+  unit?: string;
+  type?: string;
+}) {
+  const unit = String(trade.unit ?? "").trim().toLowerCase();
+  if (unit === "lot" || unit === "張") return trade.quantity * 1000;
+  if (unit === "share" || unit === "股") return trade.quantity;
+  if (isStockDividendTrade(trade)) return trade.quantity;
+  return trade.market === "TW" ? trade.quantity * 1000 : trade.quantity;
+}
+
 export function calculatePositions(
   trades: InvestmentTrade[],
 ): InvestmentPosition[] {
@@ -173,9 +199,13 @@ export function calculatePositions(
       currency: trade.currency,
       updatedAt: trade.updatedAt,
     };
-    const quantity = trade.quantity * (trade.market === "TW" ? 1000 : 1);
+    const quantity = getTradeShareQuantity(trade);
 
-    if (trade.side === "buy") {
+    if (isStockDividendTrade(trade)) {
+      current.quantity += quantity;
+      current.averageCost =
+        current.quantity > 0 ? current.totalCost / current.quantity : 0;
+    } else if (trade.side === "buy") {
       const addedCost = quantity * trade.price + trade.fee + trade.tax;
       const nextQuantity = current.quantity + quantity;
       current.totalCost += addedCost;

@@ -2,6 +2,7 @@ import "server-only";
 
 import {
   calculatePositions,
+  isStockDividendTrade,
   normalizeDateOnly,
   normalizeSymbol,
   type CashAccount,
@@ -42,8 +43,10 @@ function trade(row: Record<string, unknown>): InvestmentTrade {
     symbol,
     ticker: symbol,
     name: String(row.name ?? ""),
+    type: String(row.type ?? ""),
     side: row.side === "sell" ? "sell" : "buy",
     quantity: number(row.quantity),
+    unit: String(row.unit ?? ""),
     price: number(row.price),
     fee: number(row.fee),
     tax: number(row.tax),
@@ -197,6 +200,7 @@ export async function refreshCashAccounts() {
   };
 
   tradeRows.map(trade).forEach((item) => {
+    if (isStockDividendTrade(item)) return;
     const target = findAccount(item.currency);
     add(target, {
       id: `ledger-trade-${item.id}`,

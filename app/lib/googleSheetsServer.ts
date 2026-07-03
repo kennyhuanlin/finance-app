@@ -24,7 +24,7 @@ export const sheetHeaders = {
   ],
   investment_trades: [
     "id", "tradeDate", "market", "broker", "account", "symbol", "name",
-    "side", "quantity", "price", "fee", "tax", "currency", "exchangeRate",
+    "type", "side", "quantity", "unit", "price", "fee", "tax", "currency", "exchangeRate",
     "amount", "note", "createdAt", "updatedAt", "date", "ticker",
     "totalAmount",
   ],
@@ -253,11 +253,23 @@ async function ensureHeaderRow(sheet: SupportedSheet) {
   const result = await googleRequest<{ values?: unknown[][] }>(
     `${SHEETS_API}/${encodeURIComponent(spreadsheetId)}/values/${range}`,
   );
-  const hasHeaders = (result.values?.[0] ?? []).some(
+  const currentHeaders = (result.values?.[0] ?? []).map((value) =>
+    String(value).trim(),
+  );
+  const hasHeaders = currentHeaders.some(
     (value) => String(value).trim() !== "",
   );
   if (!hasHeaders) {
     await writeValues(sheet, "A1", [Array.from(sheetHeaders[sheet])]);
+    return;
+  }
+  const missingHeaders = sheetHeaders[sheet].filter(
+    (header) => !currentHeaders.includes(header),
+  );
+  if (missingHeaders.length) {
+    await writeValues(sheet, "A1", [
+      [...currentHeaders, ...missingHeaders],
+    ]);
   }
 }
 

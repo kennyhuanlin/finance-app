@@ -32,7 +32,9 @@ import {
   deleteInvestmentTrade,
   deleteCashAccount,
   getInvestmentBundle,
+  InvestmentSyncError,
   SheetRequestError,
+  syncInvestments,
   updateCashAccount,
   updateDividendRecord,
   updateFxRecord,
@@ -83,7 +85,7 @@ type AdjustmentForm = {
 const nowIso = () => new Date().toISOString();
 const emptyTrade = (): TradeForm => ({
   id: "", date: localDateKey(), market: "TW", symbol: "", ticker: "", name: "", side: "buy",
-  quantity: "", price: "", fee: "0", tax: "0", currency: "TWD",
+  type: "trade", quantity: "", unit: "lot", price: "", fee: "0", tax: "0", currency: "TWD",
   exchangeRate: "1", note: "", createdAt: "", updatedAt: "",
 });
 const emptyFx = (): FxForm => ({
@@ -115,8 +117,9 @@ function normalizeTrade(row: Record<string, unknown>): InvestmentTrade {
   return {
     id: String(row.id ?? ""), date: String(row.tradeDate || row.date || ""),
     tradeDate: String(row.tradeDate || row.date || ""), market, symbol,
-    ticker: symbol, name: String(row.name ?? ""), side: row.side === "sell" ? "sell" : "buy",
-    quantity: number(row.quantity), price: number(row.price), fee: number(row.fee), tax: number(row.tax),
+    ticker: symbol, name: String(row.name ?? ""), type: String(row.type ?? ""),
+    side: row.side === "sell" ? "sell" : "buy", quantity: number(row.quantity),
+    unit: String(row.unit ?? ""), price: number(row.price), fee: number(row.fee), tax: number(row.tax),
     currency: row.currency === "USD" ? "USD" : "TWD", exchangeRate: number(row.exchangeRate),
     totalAmount: number(row.totalAmount), note: String(row.note ?? ""),
     createdAt: String(row.createdAt ?? ""), updatedAt: String(row.updatedAt ?? ""),
@@ -197,6 +200,7 @@ export default function InvestmentsPage() {
   const [message, setMessage] = useState("正在讀取投資資料…");
   const [saving, setSaving] = useState(false);
   const [fxRateManual, setFxRateManual] = useState(false);
+  const [isSyncing, setIsSyncing] = useState(false);
   const [fxRateDisplay, setFxRateDisplay] = useState("");
   const [resourceErrors, setResourceErrors] = useState<
     Partial<Record<InvestmentResource, ResourceErrorInfo>>
@@ -582,14 +586,53 @@ export default function InvestmentsPage() {
     } catch { setMessage("刪除失敗"); }
   }
 
+  async function handleSyncInvestments() {
+    if (isSyncing) return;
+    setIsSyncing(true);
+    setMessage("同步中...");
+    try {
+      await syncInvestments();
+      await load(true);
+      setMessage("庫存已重新同步");
+    } catch (error) {
+      const resource =
+        error instanceof InvestmentSyncError ? error.resource : "investments";
+      const status =
+        error instanceof InvestmentSyncError ? error.status : 0;
+      const errorMessage =
+        error instanceof Error ? error.message : "Unknown sync error";
+      console.error("Investment sync failed", {
+        resource,
+        status,
+        message: errorMessage,
+        error,
+      });
+      setMessage(
+        `同步失敗 · ${resource} · status ${status || "unknown"} · ${errorMessage}`,
+      );
+    } finally {
+      setIsSyncing(false);
+    }
+  }
+
   const card = "rounded-[28px] border border-white/80 bg-white/85 p-5 shadow-sm shadow-slate-200/80 backdrop-blur-xl";
   return (
     <main className="min-h-screen bg-[#f6f7fb] text-slate-950">
       <section className="mx-auto flex w-full max-w-6xl flex-col gap-5 px-4 pb-[calc(7rem+env(safe-area-inset-bottom))] pt-6 sm:px-6 lg:px-8">
-        <header>
-          <p className="text-sm font-medium text-indigo-500">Investment journal</p>
-          <h1 className="mt-1 text-3xl font-semibold">投資記帳</h1>
-          <p className="mt-2 text-sm text-slate-500">台股、美股、換匯與股息集中管理</p>
+        <header className="flex flex-wrap items-end justify-between gap-4">
+          <div>
+            <p className="text-sm font-medium text-indigo-500">Investment journal</p>
+            <h1 className="mt-1 text-3xl font-semibold">投資記帳</h1>
+            <p className="mt-2 text-sm text-slate-500">台股、美股、換匯與股息集中管理</p>
+          </div>
+          <button
+            type="button"
+            onClick={handleSyncInvestments}
+            disabled={isSyncing}
+            className="rounded-full bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white shadow-lg shadow-indigo-100 disabled:bg-slate-300 disabled:shadow-none"
+          >
+            {isSyncing ? "同步中..." : "重新同步庫存"}
+          </button>
         </header>
         {message ? <p className="rounded-2xl bg-indigo-50 px-4 py-3 text-sm font-medium text-indigo-700">{message}</p> : null}
         {tab === "overview" && Object.keys(resourceErrors).length ? (
@@ -662,7 +705,7 @@ export default function InvestmentsPage() {
         <div className="mb-5 flex items-center justify-between"><h2 className="text-xl font-semibold">{editor === "trade" ? "交易紀錄" : editor === "fx" ? "換匯紀錄" : editor === "dividend" ? "股息紀錄" : editor === "account" ? accountForm.id ? "編輯現金帳戶" : "新增現金帳戶" : "調整現金餘額"}</h2><button onClick={() => setEditor(null)} className="rounded-full bg-slate-100 px-3 py-2">✕</button></div>
         {editor === "trade" ? <form onSubmit={saveTrade} className="grid grid-cols-2 gap-3">
           <Field label="日期"><input required type="date" value={tradeForm.date} onChange={(e) => setTradeForm({...tradeForm,date:e.target.value})}/></Field>
-          <Field label="市場"><select value={tradeForm.market} onChange={(e) => { const market=e.target.value as Market; const symbol=normalizeSymbol(tradeForm.symbol||tradeForm.ticker,market); setTradeForm({...tradeForm,market,symbol,ticker:symbol,name:tradeForm.name||getSymbolName(symbol,market),currency:market==="US"?"USD":"TWD",exchangeRate:market==="US"?tradeForm.exchangeRate||"":"1"}); }}><option value="TW">台股</option><option value="US">美股</option></select></Field>
+          <Field label="市場"><select value={tradeForm.market} onChange={(e) => { const market=e.target.value as Market; const symbol=normalizeSymbol(tradeForm.symbol||tradeForm.ticker,market); setTradeForm({...tradeForm,market,symbol,ticker:symbol,name:tradeForm.name||getSymbolName(symbol,market),unit:market==="TW"?"lot":"share",currency:market==="US"?"USD":"TWD",exchangeRate:market==="US"?tradeForm.exchangeRate||"":"1"}); }}><option value="TW">台股</option><option value="US">美股</option></select></Field>
           <Field label="股票代號"><input required type="text" inputMode={tradeForm.market === "TW" ? "numeric" : "text"} value={tradeForm.symbol} onBlur={finalizeTradeSymbol} onChange={(e) => updateTradeSymbol(e.target.value)}/></Field>
           <Field label="名稱"><input required value={tradeForm.name} onChange={(e) => setTradeForm({...tradeForm,name:e.target.value})}/></Field>
           <Field label="方向"><select value={tradeForm.side} onChange={(e) => setTradeForm({...tradeForm,side:e.target.value as TradeSide})}><option value="buy">買入</option><option value="sell">賣出</option></select></Field>
