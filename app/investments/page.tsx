@@ -12,13 +12,17 @@ import {
   type FxRecord,
   formatExchangeRate,
   formatInvestmentMoney,
+  formatInvestmentTradeType,
   getExchangeRateDisplay,
   getSymbolName,
   type InvestmentTrade,
   type InvestmentPosition,
+  type InvestmentTradeType,
+  isStockDividendTrade,
   localDateKey,
   type Market,
   normalizeSymbol,
+  normalizeInvestmentTradeType,
   type TradeSide,
 } from "../lib/investments";
 import {
@@ -85,7 +89,7 @@ type AdjustmentForm = {
 const nowIso = () => new Date().toISOString();
 const emptyTrade = (): TradeForm => ({
   id: "", date: localDateKey(), market: "TW", symbol: "", ticker: "", name: "", side: "buy",
-  type: "trade", quantity: "", unit: "lot", price: "", fee: "0", tax: "0", currency: "TWD",
+  type: "buy", quantity: "", unit: "lot", price: "", fee: "0", tax: "0", currency: "TWD",
   exchangeRate: "1", note: "", createdAt: "", updatedAt: "",
 });
 const emptyFx = (): FxForm => ({
@@ -117,7 +121,11 @@ function normalizeTrade(row: Record<string, unknown>): InvestmentTrade {
   return {
     id: String(row.id ?? ""), date: String(row.tradeDate || row.date || ""),
     tradeDate: String(row.tradeDate || row.date || ""), market, symbol,
-    ticker: symbol, name: String(row.name ?? ""), type: String(row.type ?? ""),
+    ticker: symbol, name: String(row.name ?? ""),
+    type: normalizeInvestmentTradeType(
+      row.type,
+      row.side === "sell" ? "sell" : "buy",
+    ),
     side: row.side === "sell" ? "sell" : "buy", quantity: number(row.quantity),
     unit: String(row.unit ?? ""), price: number(row.price), fee: number(row.fee), tax: number(row.tax),
     currency: row.currency === "USD" ? "USD" : "TWD", exchangeRate: number(row.exchangeRate),
@@ -311,6 +319,30 @@ export default function InvestmentsPage() {
       };
     });
   }
+  function updateTradeType(type: InvestmentTradeType) {
+    const side: TradeSide = type === "sell" ? "sell" : "buy";
+    if (type === "stock_dividend") {
+      setTradeForm({
+        ...tradeForm,
+        type,
+        side,
+        market: "TW",
+        unit: "share",
+        price: "0",
+        fee: "0",
+        tax: "0",
+        currency: "TWD",
+        exchangeRate: "1",
+      });
+      return;
+    }
+    setTradeForm({
+      ...tradeForm,
+      type,
+      side,
+      unit: tradeForm.market === "TW" ? "lot" : "share",
+    });
+  }
   function updateDividendSymbol(value: string) {
     const symbol = value.toUpperCase();
     const normalizedSymbol = normalizeSymbol(symbol, dividendForm.market);
@@ -436,21 +468,40 @@ export default function InvestmentsPage() {
     event.preventDefault(); setSaving(true);
     const stamp = nowIso();
     const tradeId = editingTradeId || `trade-${Date.now()}`;
+    const tradeType = normalizeInvestmentTradeType(
+      tradeForm.type,
+      tradeForm.side,
+    );
+    const isStockDividend = tradeType === "stock_dividend";
+    const market = isStockDividend ? "TW" : tradeForm.market;
+    const side: TradeSide = tradeType === "sell" ? "sell" : "buy";
+    const price = isStockDividend ? 0 : number(tradeForm.price);
+    const fee = isStockDividend ? 0 : number(tradeForm.fee);
+    const tax = isStockDividend ? 0 : number(tradeForm.tax);
     const payload: InvestmentTrade = {
       ...tradeForm,
+      type: tradeType,
+      side,
+      market,
+      unit: isStockDividend
+        ? "share"
+        : tradeForm.unit || (market === "TW" ? "lot" : "share"),
+      currency: isStockDividend ? "TWD" : tradeForm.currency,
       tradeDate: tradeForm.date,
       symbol: normalizeSymbol(
         tradeForm.symbol || tradeForm.ticker,
-        tradeForm.market,
+        market,
       ),
       ticker: normalizeSymbol(
         tradeForm.symbol || tradeForm.ticker,
-        tradeForm.market,
+        market,
       ),
       name: tradeForm.name.trim(),
-      quantity: number(tradeForm.quantity), price: number(tradeForm.price), fee: number(tradeForm.fee),
-      tax: number(tradeForm.tax), exchangeRate: number(tradeForm.exchangeRate),
-      totalAmount: calculateTradeTotal(tradeForm.market, tradeForm.side, number(tradeForm.quantity), number(tradeForm.price), number(tradeForm.fee), number(tradeForm.tax)),
+      quantity: number(tradeForm.quantity), price, fee, tax,
+      exchangeRate: isStockDividend ? 1 : number(tradeForm.exchangeRate),
+      totalAmount: isStockDividend
+        ? 0
+        : calculateTradeTotal(market, side, number(tradeForm.quantity), price, fee, tax),
       id: tradeId, createdAt: tradeForm.createdAt || stamp, updatedAt: stamp,
     };
     try {
@@ -660,7 +711,7 @@ export default function InvestmentsPage() {
         </div> : null}
 
         {tab === "trades" ? <RecordSection title="買賣紀錄" action={() => openTrade()} error={resourceErrors.investment_trades}>
-          {trades.slice().sort((a,b) => b.date.localeCompare(a.date)).map((item) => <RecordRow key={item.id} title={`${item.symbol} ${item.name}`} meta={`${item.date} · ${item.market} · ${item.side === "buy" ? "買入" : "賣出"} ${item.quantity} ${item.market === "TW" ? "張" : "股"}`} amount={`${item.side === "buy" ? "-" : "+"}${formatInvestmentMoney(item.totalAmount, item.currency)}`} onEdit={() => openTrade(item)} onDelete={() => remove("trade", item.id)} />)}
+          {trades.slice().sort((a,b) => b.date.localeCompare(a.date)).map((item) => <RecordRow key={item.id} title={`${item.symbol} ${item.name}`} meta={`${item.date} · ${item.market} · ${formatInvestmentTradeType(item.type,item.side)} · ${item.quantity} ${isStockDividendTrade(item) || item.unit === "share" || item.unit === "股" ? "股" : item.market === "TW" ? "張" : "股"}`} amount={isStockDividendTrade(item) ? "不影響現金" : `${item.side === "buy" ? "-" : "+"}${formatInvestmentMoney(item.totalAmount, item.currency)}`} onEdit={() => openTrade(item)} onDelete={() => remove("trade", item.id)} />)}
         </RecordSection> : null}
 
         {tab === "positions" ? <section className={card}><h2 className="text-xl font-semibold">庫存持股</h2><ResourceError error={resourceErrors.investment_positions}/><div className="mt-3 divide-y divide-slate-100">
@@ -704,15 +755,22 @@ export default function InvestmentsPage() {
       {editor ? <div className="fixed inset-0 z-40 overflow-y-auto bg-slate-950/35 p-4 backdrop-blur-sm"><div className="mx-auto mt-8 max-h-[calc(100dvh-1.5rem)] max-w-xl overflow-y-auto rounded-[30px] bg-white px-5 pt-5 pb-[calc(8rem+env(safe-area-inset-bottom))] shadow-2xl">
         <div className="mb-5 flex items-center justify-between"><h2 className="text-xl font-semibold">{editor === "trade" ? "交易紀錄" : editor === "fx" ? "換匯紀錄" : editor === "dividend" ? "股息紀錄" : editor === "account" ? accountForm.id ? "編輯現金帳戶" : "新增現金帳戶" : "調整現金餘額"}</h2><button onClick={() => setEditor(null)} className="rounded-full bg-slate-100 px-3 py-2">✕</button></div>
         {editor === "trade" ? <form onSubmit={saveTrade} className="grid grid-cols-2 gap-3">
-          <Field label="日期"><input required type="date" value={tradeForm.date} onChange={(e) => setTradeForm({...tradeForm,date:e.target.value})}/></Field>
-          <Field label="市場"><select value={tradeForm.market} onChange={(e) => { const market=e.target.value as Market; const symbol=normalizeSymbol(tradeForm.symbol||tradeForm.ticker,market); setTradeForm({...tradeForm,market,symbol,ticker:symbol,name:tradeForm.name||getSymbolName(symbol,market),unit:market==="TW"?"lot":"share",currency:market==="US"?"USD":"TWD",exchangeRate:market==="US"?tradeForm.exchangeRate||"":"1"}); }}><option value="TW">台股</option><option value="US">美股</option></select></Field>
-          <Field label="股票代號"><input required type="text" inputMode={tradeForm.market === "TW" ? "numeric" : "text"} value={tradeForm.symbol} onBlur={finalizeTradeSymbol} onChange={(e) => updateTradeSymbol(e.target.value)}/></Field>
-          <Field label="名稱"><input required value={tradeForm.name} onChange={(e) => setTradeForm({...tradeForm,name:e.target.value})}/></Field>
-          <Field label="方向"><select value={tradeForm.side} onChange={(e) => setTradeForm({...tradeForm,side:e.target.value as TradeSide})}><option value="buy">買入</option><option value="sell">賣出</option></select></Field>
-          <Field label="幣別"><select value={tradeForm.currency} onChange={(e) => setTradeForm({...tradeForm,currency:e.target.value as Currency})}><option value="TWD">TWD</option><option value="USD">USD</option></select></Field>
-          {(["quantity","price","fee","tax","exchangeRate"] as const).map((key) => <Field key={key} label={{quantity:tradeForm.market === "TW" ? "張數" : "股數",price:"成交價",fee:"手續費",tax:"交易稅",exchangeRate:"匯率"}[key]}><input required step="any" min="0" type="number" value={tradeForm[key]} onChange={(e) => setTradeForm({...tradeForm,[key]:e.target.value})}/></Field>)}
-          <Field label="備註" wide><input value={tradeForm.note} onChange={(e) => setTradeForm({...tradeForm,note:e.target.value})}/></Field>
-          <p className="col-span-2 rounded-2xl bg-indigo-50 p-3 text-sm font-semibold text-indigo-700">總額：{formatInvestmentMoney(calculateTradeTotal(tradeForm.market,tradeForm.side,number(tradeForm.quantity),number(tradeForm.price),number(tradeForm.fee),number(tradeForm.tax)),tradeForm.currency)}</p>
+          <Field label="類型" wide><select value={normalizeInvestmentTradeType(tradeForm.type,tradeForm.side)} onChange={(e) => updateTradeType(e.target.value as InvestmentTradeType)}><option value="buy">買進</option><option value="sell">賣出</option><option value="dividend">現金股利</option><option value="stock_dividend">股票股利</option><option value="fx">外匯</option></select></Field>
+          {isStockDividendTrade(tradeForm) ? <>
+            <Field label="股票代號"><input required type="text" inputMode="numeric" value={tradeForm.symbol} onBlur={finalizeTradeSymbol} onChange={(e) => updateTradeSymbol(e.target.value)}/></Field>
+            <Field label="股票名稱"><input required value={tradeForm.name} onChange={(e) => setTradeForm({...tradeForm,name:e.target.value})}/></Field>
+            <Field label="股數"><input required step="any" min="0" type="number" value={tradeForm.quantity} onChange={(e) => setTradeForm({...tradeForm,quantity:e.target.value})}/></Field>
+            <Field label="日期"><input required type="date" value={tradeForm.date} onChange={(e) => setTradeForm({...tradeForm,date:e.target.value})}/></Field>
+          </> : <>
+            <Field label="日期"><input required type="date" value={tradeForm.date} onChange={(e) => setTradeForm({...tradeForm,date:e.target.value})}/></Field>
+            <Field label="市場"><select value={tradeForm.market} onChange={(e) => { const market=e.target.value as Market; const symbol=normalizeSymbol(tradeForm.symbol||tradeForm.ticker,market); setTradeForm({...tradeForm,market,symbol,ticker:symbol,name:tradeForm.name||getSymbolName(symbol,market),unit:market==="TW"?"lot":"share",currency:market==="US"?"USD":"TWD",exchangeRate:market==="US"?tradeForm.exchangeRate||"":"1"}); }}><option value="TW">台股</option><option value="US">美股</option></select></Field>
+            <Field label="股票代號"><input required type="text" inputMode={tradeForm.market === "TW" ? "numeric" : "text"} value={tradeForm.symbol} onBlur={finalizeTradeSymbol} onChange={(e) => updateTradeSymbol(e.target.value)}/></Field>
+            <Field label="股票名稱"><input required value={tradeForm.name} onChange={(e) => setTradeForm({...tradeForm,name:e.target.value})}/></Field>
+            <Field label="幣別"><select value={tradeForm.currency} onChange={(e) => setTradeForm({...tradeForm,currency:e.target.value as Currency})}><option value="TWD">TWD</option><option value="USD">USD</option></select></Field>
+            {(["quantity","price","fee","tax","exchangeRate"] as const).map((key) => <Field key={key} label={{quantity:tradeForm.market === "TW" ? "張數" : "股數",price:"成交價",fee:"手續費",tax:"交易稅",exchangeRate:"匯率"}[key]}><input required step="any" min="0" type="number" value={tradeForm[key]} onChange={(e) => setTradeForm({...tradeForm,[key]:e.target.value})}/></Field>)}
+            <Field label="備註" wide><input value={tradeForm.note} onChange={(e) => setTradeForm({...tradeForm,note:e.target.value})}/></Field>
+            <p className="col-span-2 rounded-2xl bg-indigo-50 p-3 text-sm font-semibold text-indigo-700">總額：{formatInvestmentMoney(calculateTradeTotal(tradeForm.market,tradeForm.side,number(tradeForm.quantity),number(tradeForm.price),number(tradeForm.fee),number(tradeForm.tax)),tradeForm.currency)}</p>
+          </>}
           <Submit saving={saving}/>
         </form> : null}
         {editor === "fx" ? <form onSubmit={saveFx} className="grid grid-cols-2 gap-3">

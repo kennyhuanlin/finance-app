@@ -1,6 +1,12 @@
 export type Market = "TW" | "US";
 export type Currency = "TWD" | "USD";
 export type TradeSide = "buy" | "sell";
+export type InvestmentTradeType =
+  | "buy"
+  | "sell"
+  | "dividend"
+  | "stock_dividend"
+  | "fx";
 
 export type InvestmentTrade = {
   id: string;
@@ -10,7 +16,7 @@ export type InvestmentTrade = {
   symbol: string;
   ticker: string;
   name: string;
-  type?: string;
+  type?: InvestmentTradeType | string;
   side: TradeSide;
   quantity: number;
   unit?: string;
@@ -155,12 +161,33 @@ export function calculateTradeTotal(
 export function isStockDividendTrade(trade: {
   type?: string;
 }) {
-  const type = String(trade.type ?? "").trim().toLowerCase();
-  return (
-    type === "stock_dividend" ||
-    type === "dividend_stock" ||
-    type === "配股"
-  );
+  return normalizeInvestmentTradeType(trade.type) === "stock_dividend";
+}
+
+export function normalizeInvestmentTradeType(
+  type: unknown,
+  side: TradeSide = "buy",
+): InvestmentTradeType {
+  const value = String(type ?? "").trim().toLowerCase();
+  if (value === "stock_dividend" || value === "dividend_stock" || value === "配股") {
+    return "stock_dividend";
+  }
+  if (value === "dividend") return "dividend";
+  if (value === "fx") return "fx";
+  if (value === "sell") return "sell";
+  if (value === "buy") return "buy";
+  return side;
+}
+
+export function formatInvestmentTradeType(type: unknown, side: TradeSide) {
+  const labels: Record<InvestmentTradeType, string> = {
+    buy: "買進",
+    sell: "賣出",
+    dividend: "現金股利",
+    stock_dividend: "股票股利",
+    fx: "外匯",
+  };
+  return labels[normalizeInvestmentTradeType(type, side)];
 }
 
 export function getTradeShareQuantity(trade: {
@@ -187,6 +214,8 @@ export function calculatePositions(
   );
 
   orderedTrades.forEach((trade) => {
+    const tradeType = normalizeInvestmentTradeType(trade.type, trade.side);
+    if (tradeType === "dividend" || tradeType === "fx") return;
     const symbol = normalizeSymbol(trade.symbol || trade.ticker, trade.market);
     const key = `${trade.market}:${symbol}`;
     const current = positions.get(key) ?? {
