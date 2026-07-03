@@ -201,7 +201,7 @@ async function createOrFindSheet(sheet: SupportedSheet) {
         method: "POST",
         body: JSON.stringify({
           requests: [
-            { addSheet: { properties: { title: sheet, frozenRowCount: 1 } } },
+            { addSheet: { properties: { title: sheet } } },
           ],
         }),
       },
