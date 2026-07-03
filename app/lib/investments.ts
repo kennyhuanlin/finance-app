@@ -5,7 +5,9 @@ export type TradeSide = "buy" | "sell";
 export type InvestmentTrade = {
   id: string;
   date: string;
+  tradeDate?: string;
   market: Market;
+  symbol: string;
   ticker: string;
   name: string;
   side: TradeSide;
@@ -49,6 +51,7 @@ export type FxRecord = {
 export type DividendRecord = {
   id: string;
   date: string;
+  payDate?: string;
   market: Market;
   broker: string;
   account: string;
@@ -120,23 +123,31 @@ export const symbolNameMap: Record<string, string> = {
   "00929": "復華台灣科技優息",
 };
 
-export function normalizeSymbol(value: string) {
-  return value.trim().toUpperCase();
+export function normalizeSymbol(value: string, market?: Market) {
+  const symbol = value.trim().toUpperCase();
+  if (market === "TW" && /^\d+$/.test(symbol) && symbol.length < 4) {
+    return symbol.padStart(4, "0");
+  }
+  return symbol;
 }
 
-export function getSymbolName(value: string) {
-  return symbolNameMap[normalizeSymbol(value)] ?? "";
+export function getSymbolName(value: string, market?: Market) {
+  return symbolNameMap[normalizeSymbol(value, market)] ?? "";
 }
 
 export function calculateTradeTotal(
+  market: Market,
   side: TradeSide,
   quantity: number,
   price: number,
   fee: number,
   tax: number,
 ) {
-  const gross = quantity * price;
-  return side === "buy" ? gross + fee + tax : gross - fee - tax;
+  const multiplier = market === "TW" ? 1000 : 1;
+  const subtotal = quantity * multiplier * price;
+  return side === "buy"
+    ? subtotal + fee + tax
+    : subtotal - fee - tax;
 }
 
 export function calculatePositions(
@@ -150,10 +161,11 @@ export function calculatePositions(
   );
 
   orderedTrades.forEach((trade) => {
-    const key = `${trade.market}:${trade.ticker.toUpperCase()}`;
+    const symbol = normalizeSymbol(trade.symbol || trade.ticker, trade.market);
+    const key = `${trade.market}:${symbol}`;
     const current = positions.get(key) ?? {
       market: trade.market,
-      ticker: trade.ticker.toUpperCase(),
+      ticker: symbol,
       name: trade.name,
       quantity: 0,
       averageCost: 0,
@@ -161,21 +173,22 @@ export function calculatePositions(
       currency: trade.currency,
       updatedAt: trade.updatedAt,
     };
+    const quantity = trade.quantity * (trade.market === "TW" ? 1000 : 1);
 
     if (trade.side === "buy") {
-      const addedCost = trade.quantity * trade.price + trade.fee + trade.tax;
-      const nextQuantity = current.quantity + trade.quantity;
+      const addedCost = quantity * trade.price + trade.fee + trade.tax;
+      const nextQuantity = current.quantity + quantity;
       current.totalCost += addedCost;
       current.quantity = nextQuantity;
       current.averageCost =
         nextQuantity > 0 ? current.totalCost / nextQuantity : 0;
     } else {
-      const soldQuantity = Math.min(trade.quantity, current.quantity);
+      const soldQuantity = Math.min(quantity, current.quantity);
       current.totalCost = Math.max(
         0,
         current.totalCost - soldQuantity * current.averageCost,
       );
-      current.quantity = Math.max(0, current.quantity - trade.quantity);
+      current.quantity = Math.max(0, current.quantity - quantity);
       if (current.quantity === 0) {
         current.averageCost = 0;
         current.totalCost = 0;

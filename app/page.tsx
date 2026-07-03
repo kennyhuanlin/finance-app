@@ -9,7 +9,6 @@ import {
 } from "./data";
 import { dedupeCategories } from "./lib/categories";
 import { getCategories, getTransactions } from "./lib/googleSheets";
-import BottomNav from "./ui/bottom-nav";
 
 const periods = ["本月", "上月", "本季", "今年", "累積餘額"] as const;
 
@@ -843,7 +842,6 @@ export default function Home() {
 
       </section>
 
-      <BottomNav active="home" />
     </main>
   );
 }

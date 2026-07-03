@@ -1,5 +1,4 @@
 import Link from "next/link";
-import BottomNav from "../ui/bottom-nav";
 
 const settings = [
   {
@@ -50,7 +49,6 @@ export default function SettingsPage() {
           ))}
         </section>
       </section>
-      <BottomNav active="settings" />
     </main>
   );
 }

@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import { CategoriesProvider } from "./categories-context";
+import BottomNav from "./ui/bottom-nav";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -28,8 +29,9 @@ export default function RootLayout({
       lang="en"
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
-      <body className="min-h-full flex flex-col">
+      <body className="flex min-h-full flex-col pb-[calc(100px+env(safe-area-inset-bottom))]">
         <CategoriesProvider>{children}</CategoriesProvider>
+        <BottomNav />
       </body>
     </html>
   );

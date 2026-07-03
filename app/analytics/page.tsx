@@ -4,7 +4,6 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { dedupeCategories } from "../lib/categories";
 import { getCategories, getTransactions } from "../lib/googleSheets";
-import BottomNav from "../ui/bottom-nav";
 
 const periods = ["本月", "上月", "本季", "今年", "累積餘額"] as const;
 type Period = (typeof periods)[number];
@@ -760,7 +759,6 @@ export default function AnalyticsPage() {
         </section>
       </section>
 
-      <BottomNav active="settings" />
     </main>
   );
 }

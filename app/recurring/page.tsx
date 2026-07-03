@@ -10,7 +10,6 @@ import {
   getRecurringRules,
   updateRecurringRule,
 } from "../lib/googleSheets";
-import BottomNav from "../ui/bottom-nav";
 
 type RecurringRule = {
   id: string;
@@ -1003,7 +1002,6 @@ export default function RecurringPage() {
         </section>
       </section>
 
-      <BottomNav active="settings" />
 
       {editingRule ? (
         <div className="fixed inset-0 z-30 flex items-end bg-slate-950/30 px-3 pb-3 backdrop-blur-sm sm:items-center sm:justify-center">

@@ -8,7 +8,6 @@ import {
   useCategories,
 } from "../categories-context";
 import { transactions } from "../data";
-import BottomNav from "../ui/bottom-nav";
 
 type CategoryForm = Omit<Category, "id"> & {
   id?: string;
@@ -388,7 +387,6 @@ export default function CategoriesPage() {
         </section>
       </section>
 
-      <BottomNav active="settings" />
 
       {editingCategory ? (
         <div className="fixed inset-0 z-30 flex items-end bg-slate-950/30 px-3 pb-3 backdrop-blur-sm sm:items-center sm:justify-center">

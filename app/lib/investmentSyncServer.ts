@@ -3,6 +3,7 @@ import "server-only";
 import {
   calculatePositions,
   normalizeDateOnly,
+  normalizeSymbol,
   type CashAccount,
   type CashLedger,
   type CashLedgerType,
@@ -29,11 +30,17 @@ function currency(value: unknown): Currency {
 }
 
 function trade(row: Record<string, unknown>): InvestmentTrade {
+  const market = row.market === "US" ? "US" : "TW";
+  const symbol = normalizeSymbol(
+    String(firstValue(row.symbol, row.ticker) ?? ""),
+    market,
+  );
   return {
     id: String(row.id ?? ""),
-    date: normalizeDateOnly(row.date),
-    market: row.market === "US" ? "US" : "TW",
-    ticker: String(row.ticker ?? ""),
+    date: normalizeDateOnly(firstValue(row.tradeDate, row.date)),
+    market,
+    symbol,
+    ticker: symbol,
     name: String(row.name ?? ""),
     side: row.side === "sell" ? "sell" : "buy",
     quantity: number(row.quantity),
@@ -118,7 +125,7 @@ export async function refreshCashAccounts() {
     const fee = number(row.fee);
     return {
       id: String(row.id ?? ""),
-      date: normalizeDateOnly(row.date),
+      date: normalizeDateOnly(firstValue(row.payDate, row.date)),
       account: String(row.account ?? "").trim(),
       symbol: String(firstValue(row.symbol, row.ticker) ?? ""),
       name: String(row.name ?? ""),
