@@ -65,11 +65,11 @@ const emptyForm: RuleForm = {
 };
 
 function isExpenseRule(rule: { type: string }) {
-  return rule.type === "支出" || rule.type === "expense";
+  return rule.type === "支出";
 }
 
 function isIncomeRule(rule: { type: string }) {
-  return rule.type === "收入" || rule.type === "income";
+  return rule.type === "收入";
 }
 
 function formatMoney(value: number) {
@@ -275,31 +275,40 @@ function normalizeRecurringRule(
   rule: Record<string, unknown>,
   index: number,
 ): RecurringRule {
-  const frequency = String(rule.frequency ?? "monthly");
-  const startDate = normalizeDateOnly(rule.startDate) || todayDateOnly();
-  const enabled =
-    rule.enabled === true ||
-    String(rule.enabled ?? "true").toLowerCase() === "true";
+  const frequency = String(rule.frequency ?? "monthly").trim() || "monthly";
+  const startDate = normalizeDateOnly(rule.startDate);
+  const rawEnabled = rule.enabled ?? rule.isActive ?? "";
+  const enabledText = String(rawEnabled).trim().toLowerCase();
+  const enabled = !["false", "否", "停用", "0", "paused", "inactive"].includes(
+    enabledText,
+  );
+  const rawType = String(rule.type ?? "").trim().toLowerCase();
+  const type =
+    rawType.includes("income") || rawType.includes("收入") ? "收入" : "支出";
+  const amount = Number(rule.amount ?? 0);
 
   return {
     id: String(rule.id ?? `recurring-${index}`),
-    name: String(rule.name ?? ""),
-    type: String(rule.type ?? "支出"),
+    name: String(
+      rule.name ?? rule.description ?? rule.memo ?? rule.note ?? "未命名固定收支",
+    ),
+    type,
     nature: String(rule.nature ?? "固定扣款"),
     necessity: String(rule.necessity ?? "必要"),
     categoryId:
       rule.categoryId === undefined ? undefined : String(rule.categoryId),
     category: String(rule.category ?? ""),
-    amount: Number(rule.amount ?? 0),
+    amount: Number.isFinite(amount) ? amount : 0,
     frequency,
     expenseType: String(rule.expenseType ?? "固定"),
-    note: String(rule.note ?? ""),
+    note: String(rule.note ?? rule.memo ?? rule.description ?? ""),
     lastRunDate: normalizeDateOnly(rule.lastRunDate),
     endDate: normalizeDateOnly(rule.endDate),
     remainingCount: normalizeRemainingCount(rule.remainingCount),
     startDate,
     nextRunDate:
-      normalizeDateOnly(rule.nextRunDate) || addPeriod(startDate, frequency),
+      normalizeDateOnly(rule.nextRunDate ?? rule.nextDate) ||
+      (startDate ? addPeriod(startDate, frequency) : ""),
     status: enabled ? "active" : "paused",
     enabled,
     manualNextRunDate: false,
@@ -443,9 +452,11 @@ export default function RecurringPage() {
           sheetRules.map((rule, index) => normalizeRecurringRule(rule, index)),
         );
       })
-      .catch(() => {
+      .catch((error) => {
         if (isMounted) {
-          setStatusMessage("固定支出資料讀取失敗");
+          const message =
+            error instanceof Error ? error.message : "未知錯誤";
+          setStatusMessage(`固定收支讀取失敗：${message}`);
         }
       })
       .finally(() => {
@@ -877,7 +888,7 @@ export default function RecurringPage() {
 
             {!isLoading && visibleRules.length === 0 ? (
               <p className="rounded-[24px] bg-slate-50/80 p-4 text-sm font-medium text-slate-400">
-                尚未建立{activeTab === "expense" ? "固定支出" : "固定收入"}
+                尚未設定固定收支
               </p>
             ) : null}
 

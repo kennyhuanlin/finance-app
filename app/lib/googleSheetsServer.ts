@@ -16,11 +16,11 @@ export const sheetHeaders = {
     "id", "name", "type", "color", "icon", "sortOrder", "isActive",
     "createdAt", "updatedAt", "emoji",
   ],
-  recurring: [
+  recurring_rules: [
     "id", "name", "type", "category", "amount", "frequency", "startDate",
     "endDate", "nextDate", "remainingCount", "isActive", "note", "createdAt",
     "updatedAt", "expenseType", "necessity", "nextRunDate", "enabled",
-    "lastRunDate", "categoryId", "nature",
+    "lastRunDate", "categoryId", "nature", "account",
   ],
   investment_trades: [
     "id", "tradeDate", "market", "broker", "account", "symbol", "name",

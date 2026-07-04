@@ -18,7 +18,7 @@ import {
 const RESOURCE_CONFIG = {
   transactions: { resource: "transactions", sheetName: "transactions" },
   categories: { resource: "categories", sheetName: "categories" },
-  recurring: { resource: "recurring", sheetName: "recurring" },
+  recurring: { resource: "recurring", sheetName: "recurring_rules" },
   "investment-trades": {
     resource: "investment-trades",
     sheetName: "investment_trades",
