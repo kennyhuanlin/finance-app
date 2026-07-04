@@ -19,29 +19,12 @@ type Entry = {
   note: string;
 };
 
-const calculatorKeys = ["1", "2", "3", "4", "5", "6", "7", "8", "9", ".", "0"];
-
 function formatMoney(value: number) {
   return new Intl.NumberFormat("zh-TW", {
     style: "currency",
     currency: "TWD",
     maximumFractionDigits: 0,
   }).format(value);
-}
-
-function formatAmountDisplay(value: string) {
-  if (!value) {
-    return "0";
-  }
-
-  const [integerPart, decimalPart] = value.split(".");
-  const formattedInteger = new Intl.NumberFormat("zh-TW").format(
-    Number(integerPart || "0"),
-  );
-
-  return decimalPart === undefined
-    ? formattedInteger
-    : `${formattedInteger}.${decimalPart}`;
 }
 
 function today() {
@@ -198,30 +181,6 @@ export default function AddRecordPage() {
     }
   }
 
-  function handleCalculatorTap(key: string) {
-    setAmount((current) => {
-      if (key === ".") {
-        return current.includes(".") ? current : `${current || "0"}.`;
-      }
-
-      const [, decimalPart] = current.split(".");
-
-      if (decimalPart && decimalPart.length >= 2) {
-        return current;
-      }
-
-      if (current === "0") {
-        return key;
-      }
-
-      return `${current}${key}`;
-    });
-  }
-
-  function handleDeleteAmount() {
-    setAmount((current) => current.slice(0, -1));
-  }
-
   return (
     <main className="min-h-screen overflow-x-hidden bg-[#f6f7fb] text-slate-950">
       <div className="fixed inset-0 -z-10 bg-[radial-gradient(circle_at_0%_0%,#dbeafe_0,transparent_34%),radial-gradient(circle_at_100%_0%,#fce7f3_0,transparent_28%),linear-gradient(180deg,#fbfcff_0%,#eef2ff_100%)]" />
@@ -281,9 +240,16 @@ export default function AddRecordPage() {
                 <span className="mr-2 text-2xl font-semibold text-slate-400">
                   NT$
                 </span>
-                <div className="min-w-0 flex-1 overflow-hidden text-right text-5xl font-semibold tracking-normal text-slate-950">
-                  {formatAmountDisplay(amount)}
-                </div>
+                <input
+                  type="number"
+                  inputMode="decimal"
+                  min="0"
+                  step="any"
+                  value={amount}
+                  onChange={(event) => setAmount(event.target.value)}
+                  placeholder="0"
+                  className="min-w-0 flex-1 bg-transparent text-right text-5xl font-semibold tracking-normal text-slate-950 outline-none placeholder:text-slate-300"
+                />
               </div>
             </label>
           </section>
@@ -347,6 +313,14 @@ export default function AddRecordPage() {
                 className="h-13 rounded-[22px] border border-transparent bg-slate-50 px-4 text-base font-medium text-slate-950 outline-none transition placeholder:text-slate-300 focus:border-slate-200 focus:bg-white"
               />
             </label>
+
+            <button
+              type="submit"
+              disabled={!canSubmit || isSubmitting}
+              className="mt-2 flex h-14 w-full items-center justify-center rounded-full bg-slate-950 text-base font-semibold text-white shadow-lg shadow-slate-300/80 transition active:scale-[0.99] disabled:bg-slate-300 disabled:shadow-none"
+            >
+              {isSubmitting ? "儲存中..." : "新增紀錄"}
+            </button>
           </section>
         </form>
 
@@ -394,39 +368,6 @@ export default function AddRecordPage() {
         </section>
       </section>
 
-      <div className="relative border-t border-white/80 bg-white/90 px-4 pt-3 pb-[calc(8rem+env(safe-area-inset-bottom))] shadow-[0_-12px_32px_rgba(15,23,42,0.08)]">
-        <div className="mx-auto grid max-w-xl gap-3">
-          <div className="grid grid-cols-3 gap-2">
-            {calculatorKeys.map((key) => (
-              <button
-                key={key}
-                type="button"
-                onClick={() => handleCalculatorTap(key)}
-                className="flex h-13 items-center justify-center rounded-[22px] bg-white text-2xl font-semibold text-slate-950 shadow-sm shadow-slate-200 transition active:scale-[0.98] active:bg-slate-100"
-              >
-                {key}
-              </button>
-            ))}
-            <button
-              type="button"
-              onClick={handleDeleteAmount}
-              className="flex h-13 items-center justify-center rounded-[22px] bg-slate-100 text-2xl font-semibold text-slate-700 shadow-sm shadow-slate-200 transition active:scale-[0.98] active:bg-slate-200"
-              aria-label="刪除金額"
-            >
-              ⌫
-            </button>
-          </div>
-          <button
-            type="submit"
-            form="add-record-form"
-            disabled={!canSubmit || isSubmitting}
-            className="flex h-14 w-full items-center justify-center rounded-full bg-slate-950 text-base font-semibold text-white shadow-lg shadow-slate-300/80 transition active:scale-[0.99] disabled:bg-slate-300 disabled:shadow-none"
-          >
-            {isSubmitting ? "儲存中..." : "新增紀錄"}
-          </button>
-          <div className="h-24" aria-hidden="true" />
-        </div>
-      </div>
     </main>
   );
 }

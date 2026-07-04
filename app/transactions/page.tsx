@@ -34,7 +34,6 @@ type TransactionForm = Omit<Transaction, "amount"> & {
 
 const typeOptions = ["支出", "收入", "transfer"];
 const necessityOptions = ["必要", "非必要"];
-const calculatorKeys = ["1", "2", "3", "4", "5", "6", "7", "8", "9", ".", "0"];
 const TRANSACTIONS_PAGE_SIZE = 10;
 
 type NormalizedPeriod = "thisMonth" | "lastMonth" | "quarter" | "year" | "all";
@@ -45,21 +44,6 @@ function formatMoney(value: number) {
     currency: "TWD",
     maximumFractionDigits: 0,
   }).format(value);
-}
-
-function formatAmountDisplay(value: string) {
-  if (!value) {
-    return "0";
-  }
-
-  const [integerPart, decimalPart] = value.split(".");
-  const formattedInteger = new Intl.NumberFormat("zh-TW").format(
-    Number(integerPart || "0"),
-  );
-
-  return decimalPart === undefined
-    ? formattedInteger
-    : `${formattedInteger}.${decimalPart}`;
 }
 
 function formatDate(date: string) {
@@ -263,7 +247,6 @@ function TransactionsContent() {
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [editingTransaction, setEditingTransaction] =
     useState<TransactionForm | null>(null);
-  const [amountKeyboardOpen, setAmountKeyboardOpen] = useState(false);
   const [message, setMessage] = useState("");
   const [visibleCount, setVisibleCount] = useState(TRANSACTIONS_PAGE_SIZE);
   const [isSavingTransaction, setIsSavingTransaction] = useState(false);
@@ -423,7 +406,6 @@ function TransactionsContent() {
         : "",
       amount: String(transaction.amount),
     });
-    setAmountKeyboardOpen(true);
   }
 
   function openNewForm(
@@ -454,12 +436,10 @@ function TransactionsContent() {
       necessity: preset === "expense" ? "必要" : "",
       createdAt: undefined,
     });
-    setAmountKeyboardOpen(true);
   }
 
   function closeTransactionForm() {
     setEditingTransaction(null);
-    setAmountKeyboardOpen(false);
     const nextSearchParams = new URLSearchParams(searchParams.toString());
     nextSearchParams.delete("action");
     nextSearchParams.delete("new");
@@ -513,52 +493,11 @@ function TransactionsContent() {
     });
   }
 
-  function handleCalculatorTap(key: string) {
-    setEditingTransaction((current) => {
-      if (!current) {
-        return current;
-      }
-
-      if (key === ".") {
-        return {
-          ...current,
-          amount: current.amount.includes(".")
-            ? current.amount
-            : `${current.amount || "0"}.`,
-        };
-      }
-
-      const [, decimalPart] = current.amount.split(".");
-
-      if (decimalPart && decimalPart.length >= 2) {
-        return current;
-      }
-
-      return {
-        ...current,
-        amount: current.amount === "0" ? key : `${current.amount}${key}`,
-      };
-    });
-  }
-
-  function deleteAmountDigit() {
-    setEditingTransaction((current) =>
-      current ? { ...current, amount: current.amount.slice(0, -1) } : current,
-    );
-  }
-
-  function clearAmount() {
-    setEditingTransaction((current) =>
-      current ? { ...current, amount: "" } : current,
-    );
-  }
-
   async function saveTransaction(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
     if (
       !editingTransaction ||
-      !editingTransaction.note.trim() ||
       Number(editingTransaction.amount) <= 0 ||
       isSavingTransaction
     ) {
@@ -573,7 +512,7 @@ function TransactionsContent() {
       ...editingTransaction,
       id: editingTransaction.id || `tx-${Date.now()}`,
       createdAt: editingTransaction.createdAt || new Date().toISOString(),
-      note: editingTransaction.note.trim(),
+      note: editingTransaction.note.trim() || editingTransaction.category,
       amount: Number(editingTransaction.amount),
       expenseType: "",
       nature: "",
@@ -820,10 +759,10 @@ function TransactionsContent() {
       </section>
 
       {editingTransaction ? (
-        <div className="fixed inset-0 z-30 flex items-end bg-slate-950/30 px-3 pb-3 backdrop-blur-sm sm:items-center sm:justify-center">
+        <div className="fixed inset-0 z-[60] flex items-center overflow-y-auto bg-slate-950/30 p-3 backdrop-blur-sm">
           <form
             onSubmit={saveTransaction}
-            className="max-h-[calc(100dvh-1.5rem)] w-full max-w-xl overflow-y-auto overscroll-contain rounded-[32px] border border-white/80 bg-white px-5 pt-5 pb-[calc(140px+env(safe-area-inset-bottom))] shadow-2xl shadow-slate-950/20 [-webkit-overflow-scrolling:touch]"
+            className="mx-auto max-h-full w-full max-w-xl overflow-y-auto overscroll-contain rounded-[32px] border border-white/80 bg-white p-5 shadow-2xl shadow-slate-950/20 [-webkit-overflow-scrolling:touch]"
           >
             <div className="mb-5 flex items-center justify-between gap-4">
               <div>
@@ -913,21 +852,24 @@ function TransactionsContent() {
                 </select>
               </label>
 
-              <div className="grid gap-2">
+              <label className="grid gap-2">
                 <span className="text-sm font-medium text-slate-500">金額</span>
-                <button
-                  type="button"
-                  onClick={() => setAmountKeyboardOpen(true)}
-                  className="flex min-h-20 items-center justify-between rounded-[24px] bg-slate-50 px-4 text-left transition active:scale-[0.99]"
-                >
-                  <span className="text-xl font-semibold text-slate-400">
-                    NT$
-                  </span>
-                  <span className="min-w-0 flex-1 truncate text-right text-4xl font-semibold tracking-normal text-slate-950">
-                    {formatAmountDisplay(editingTransaction.amount)}
-                  </span>
-                </button>
-              </div>
+                <div className="flex min-h-20 items-center rounded-[24px] bg-slate-50 px-4">
+                  <span className="text-xl font-semibold text-slate-400">NT$</span>
+                  <input
+                    type="number"
+                    inputMode="decimal"
+                    min="0"
+                    step="any"
+                    value={editingTransaction.amount}
+                    onChange={(event) =>
+                      updateEditingTransaction("amount", event.target.value)
+                    }
+                    placeholder="0"
+                    className="min-w-0 flex-1 bg-transparent text-right text-4xl font-semibold tracking-normal text-slate-950 outline-none placeholder:text-slate-300"
+                  />
+                </div>
+              </label>
 
               <label className="grid gap-2">
                 <span className="text-sm font-medium text-slate-500">備註</span>
@@ -960,57 +902,6 @@ function TransactionsContent() {
               </button>
             </div>
 
-            {amountKeyboardOpen ? (
-              <div className="-mx-5 mt-5 border-t border-slate-100 bg-white/95 px-5 pb-5 pt-3">
-                <div className="mb-3 flex items-center justify-between">
-                  <p className="text-sm font-semibold text-slate-500">
-                    輸入金額
-                  </p>
-                  <button
-                    type="button"
-                    onClick={() => setAmountKeyboardOpen(false)}
-                    className="rounded-full bg-slate-100 px-3 py-1.5 text-sm font-medium text-slate-600"
-                  >
-                    確認
-                  </button>
-                </div>
-                <div className="grid grid-cols-3 gap-2">
-                  {calculatorKeys.map((key) => (
-                    <button
-                      key={key}
-                      type="button"
-                      onClick={() => handleCalculatorTap(key)}
-                      className="flex h-13 items-center justify-center rounded-[22px] bg-slate-50 text-2xl font-semibold text-slate-950 shadow-sm shadow-slate-200 transition active:scale-[0.98] active:bg-slate-100"
-                    >
-                      {key}
-                    </button>
-                  ))}
-                  <button
-                    type="button"
-                    onClick={clearAmount}
-                    className="flex h-13 items-center justify-center rounded-[22px] bg-slate-100 text-base font-semibold text-slate-700 shadow-sm shadow-slate-200 transition active:scale-[0.98] active:bg-slate-200"
-                  >
-                    清空
-                  </button>
-                  <button
-                    type="button"
-                    onClick={deleteAmountDigit}
-                    className="flex h-13 items-center justify-center rounded-[22px] bg-slate-100 text-2xl font-semibold text-slate-700 shadow-sm shadow-slate-200 transition active:scale-[0.98] active:bg-slate-200"
-                    aria-label="刪除金額"
-                  >
-                    ⌫
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setAmountKeyboardOpen(false)}
-                    className="flex h-13 items-center justify-center rounded-[22px] bg-slate-950 text-base font-semibold text-white shadow-lg shadow-slate-300/80 transition active:scale-[0.98]"
-                  >
-                    確認
-                  </button>
-                </div>
-              </div>
-            ) : null}
-            <div className="h-24" aria-hidden="true" />
           </form>
         </div>
       ) : null}
