@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { useCategories } from "../categories-context";
 import { formatCategoryLabel } from "../lib/categories";
 import { createTransaction, getTransactions } from "../lib/googleSheets";
+import CalculatorModal from "../ui/calculator-modal";
 
 type EntryType = "收入" | "支出";
 
@@ -80,6 +81,7 @@ export default function AddRecordPage() {
   const [category, setCategory] = useState("");
   const [necessity, setNecessity] = useState<"必要" | "非必要">("必要");
   const [amount, setAmount] = useState("");
+  const [calculatorOpen, setCalculatorOpen] = useState(false);
   const [note, setNote] = useState("");
   const [statusMessage, setStatusMessage] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -241,14 +243,14 @@ export default function AddRecordPage() {
                   NT$
                 </span>
                 <input
-                  type="number"
-                  inputMode="decimal"
-                  min="0"
-                  step="any"
+                  type="text"
+                  inputMode="none"
+                  readOnly
                   value={amount}
-                  onChange={(event) => setAmount(event.target.value)}
+                  onClick={() => setCalculatorOpen(true)}
                   placeholder="0"
-                  className="min-w-0 flex-1 bg-transparent text-right text-5xl font-semibold tracking-normal text-slate-950 outline-none placeholder:text-slate-300"
+                  aria-label="開啟金額計算機"
+                  className="min-w-0 flex-1 cursor-pointer bg-transparent text-right text-5xl font-semibold tracking-normal text-slate-950 outline-none placeholder:text-slate-300"
                 />
               </div>
             </label>
@@ -367,6 +369,17 @@ export default function AddRecordPage() {
           </div>
         </section>
       </section>
+
+      {calculatorOpen ? (
+        <CalculatorModal
+          initialValue={amount}
+          onClose={() => setCalculatorOpen(false)}
+          onConfirm={(value) => {
+            setAmount(value);
+            setCalculatorOpen(false);
+          }}
+        />
+      ) : null}
 
     </main>
   );

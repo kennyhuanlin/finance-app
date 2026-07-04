@@ -11,6 +11,7 @@ import {
   getTransactions,
   updateTransaction,
 } from "../lib/googleSheets";
+import CalculatorModal from "../ui/calculator-modal";
 
 type Transaction = {
   id: string;
@@ -247,6 +248,7 @@ function TransactionsContent() {
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [editingTransaction, setEditingTransaction] =
     useState<TransactionForm | null>(null);
+  const [calculatorOpen, setCalculatorOpen] = useState(false);
   const [message, setMessage] = useState("");
   const [visibleCount, setVisibleCount] = useState(TRANSACTIONS_PAGE_SIZE);
   const [isSavingTransaction, setIsSavingTransaction] = useState(false);
@@ -440,6 +442,7 @@ function TransactionsContent() {
 
   function closeTransactionForm() {
     setEditingTransaction(null);
+    setCalculatorOpen(false);
     const nextSearchParams = new URLSearchParams(searchParams.toString());
     nextSearchParams.delete("action");
     nextSearchParams.delete("new");
@@ -857,16 +860,14 @@ function TransactionsContent() {
                 <div className="flex min-h-20 items-center rounded-[24px] bg-slate-50 px-4">
                   <span className="text-xl font-semibold text-slate-400">NT$</span>
                   <input
-                    type="number"
-                    inputMode="decimal"
-                    min="0"
-                    step="any"
+                    type="text"
+                    inputMode="none"
+                    readOnly
                     value={editingTransaction.amount}
-                    onChange={(event) =>
-                      updateEditingTransaction("amount", event.target.value)
-                    }
+                    onClick={() => setCalculatorOpen(true)}
                     placeholder="0"
-                    className="min-w-0 flex-1 bg-transparent text-right text-4xl font-semibold tracking-normal text-slate-950 outline-none placeholder:text-slate-300"
+                    aria-label="開啟金額計算機"
+                    className="min-w-0 flex-1 cursor-pointer bg-transparent text-right text-4xl font-semibold tracking-normal text-slate-950 outline-none placeholder:text-slate-300"
                   />
                 </div>
               </label>
@@ -903,6 +904,16 @@ function TransactionsContent() {
             </div>
 
           </form>
+          {calculatorOpen ? (
+            <CalculatorModal
+              initialValue={editingTransaction.amount}
+              onClose={() => setCalculatorOpen(false)}
+              onConfirm={(value) => {
+                updateEditingTransaction("amount", value);
+                setCalculatorOpen(false);
+              }}
+            />
+          ) : null}
         </div>
       ) : null}
     </main>
