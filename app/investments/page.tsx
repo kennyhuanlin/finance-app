@@ -3,7 +3,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Pencil, Trash2 } from "lucide-react";
 import {
+  calculatePortfolioPnL,
   calculatePositions,
+  calculatePositionPnL,
   calculateTradeTotal,
   type CashAccount,
   type CashLedger,
@@ -20,6 +22,7 @@ import {
   type InvestmentTrade,
   type InvestmentPrice,
   type InvestmentPosition,
+  type PositionPnL,
   type InvestmentTradeType,
   isStockDividendTrade,
   localDateKey,
@@ -274,6 +277,14 @@ export default function InvestmentsPage() {
 
   const calculatedPositions = useMemo(() => calculatePositions(trades), [trades]);
   const positions = positionSnapshots.length ? positionSnapshots : calculatedPositions;
+  const portfolioPnLs = useMemo(
+    () => calculatePortfolioPnL(positions, prices),
+    [positions, prices],
+  );
+  const positionPnLs = useMemo(
+    () => positions.map((position) => calculatePositionPnL(position, prices)),
+    [positions, prices],
+  );
   const twCost = positions.filter((p) => p.market === "TW").reduce((sum, p) => sum + p.totalCost, 0);
   const usCost = positions.filter((p) => p.market === "US").reduce((sum, p) => sum + p.totalCost, 0);
   const dividendTwd = dividends.reduce((sum, item) => sum + item.amountTwd, 0);
@@ -775,7 +786,39 @@ export default function InvestmentsPage() {
           {tabs.map((item) => <button key={item.id} onClick={() => setTab(item.id)} className={`shrink-0 rounded-full px-4 py-2.5 text-sm font-semibold ${tab === item.id ? "bg-slate-950 text-white" : "bg-white text-slate-500"}`}>{item.label}</button>)}
         </div>
 
-        {tab === "overview" ? <div className="grid grid-cols-2 gap-3 lg:grid-cols-3">
+        {tab === "overview" ? <div className="grid gap-5">
+          <section className={card}>
+            <div>
+              <p className="text-sm font-medium text-indigo-500">Portfolio Summary</p>
+              <h2 className="mt-1 text-2xl font-semibold">投資總覽</h2>
+            </div>
+            <div className="mt-4 grid gap-3 lg:grid-cols-2">
+              {portfolioPnLs.map((summary) => (
+                <article key={summary.currency} className="rounded-[24px] bg-slate-50 p-4">
+                  <h3 className="font-semibold">
+                    {summary.currency === "TWD" ? "台股投資" : "美股投資"}
+                  </h3>
+                  <dl className="mt-4 grid grid-cols-2 gap-4">
+                    <PnLMetric label="總投入成本" value={formatInvestmentMoney(summary.totalCost, summary.currency, 2)} />
+                    <PnLMetric label="目前市值" value={summary.marketValue === null ? "尚未取得價格" : formatInvestmentMoney(summary.marketValue, summary.currency, 2)} />
+                    <PnLMetric label="未實現損益" value={formatSignedMoney(summary.unrealizedGain, summary.currency)} tone={pnlTone(summary.unrealizedGain)} />
+                    <PnLMetric label="報酬率" value={formatReturnRate(summary.returnRate)} tone={pnlTone(summary.returnRate)} />
+                  </dl>
+                </article>
+              ))}
+            </div>
+          </section>
+
+          <section className={card}>
+            <h2 className="text-xl font-semibold">持股損益</h2>
+            <div className="mt-3 grid gap-3 lg:grid-cols-2">
+              {positionPnLs.length
+                ? positionPnLs.map((item) => <PositionPnLCard key={`${item.position.market}-${item.position.ticker}`} item={item} />)
+                : <Empty />}
+            </div>
+          </section>
+
+          <div className="grid grid-cols-2 gap-3 lg:grid-cols-3">
           {[
             ["台幣現金", formatInvestmentMoney(twdCash, "TWD")],
             ["美元現金", formatInvestmentMoney(usdCash, "USD")],
@@ -786,6 +829,7 @@ export default function InvestmentsPage() {
             ["投資帳戶總資產估算", formatInvestmentMoney(estimatedAssets, "TWD")],
           ].map(([label, value]) => <article key={label} className={card}><p className="text-xs font-medium text-slate-500">{label}</p><p className="mt-3 text-xl font-semibold">{value}</p></article>)}
           <p className="col-span-2 px-1 text-xs text-slate-400 lg:col-span-3">美元換算匯率：1 USD = {latestUsdTwdRate.toFixed(4)} TWD；股票資產暫以持有成本估算。</p>
+          </div>
         </div> : null}
 
         {tab === "trades" ? <RecordSection title="買賣紀錄" action={() => openTrade()} error={resourceErrors.investment_trades}>
@@ -812,37 +856,7 @@ export default function InvestmentsPage() {
         </RecordSection> : null}
 
         {tab === "positions" ? <section className={card}><h2 className="text-xl font-semibold">庫存持股</h2><ResourceError error={resourceErrors.investment_positions}/><div className="mt-3 divide-y divide-slate-100">
-          {positions.length ? positions.map((item) => {
-            const price = prices.find(
-              (candidate) =>
-                candidate.market === item.market &&
-                candidate.symbol === normalizeSymbol(item.ticker, item.market),
-            );
-            const latestPrice = price?.price ?? 0;
-            const marketValue = item.quantity * latestPrice;
-            const unrealizedGain = marketValue - item.totalCost;
-            const returnRate =
-              item.totalCost > 0 ? unrealizedGain / item.totalCost : 0;
-            return <div key={`${item.market}-${item.ticker}`} className="py-4">
-              <div className="flex flex-wrap items-baseline justify-between gap-2">
-                <p className="font-semibold">{item.ticker} <span className="font-normal text-slate-500">{item.name}</span></p>
-                <p className={`font-semibold ${price ? unrealizedGain >= 0 ? "text-emerald-600" : "text-rose-600" : "text-slate-400"}`}>
-                  {price ? `${unrealizedGain >= 0 ? "+" : ""}${formatInvestmentMoney(unrealizedGain, item.currency)}` : "尚無價格"}
-                </p>
-              </div>
-              <dl className="mt-3 grid grid-cols-2 gap-x-4 gap-y-3 text-sm sm:grid-cols-6">
-                {[
-                  ["持有股數", `${item.quantity} 股`],
-                  ["平均成本", formatInvestmentMoney(item.averageCost, item.currency, 2)],
-                  ["最新價格", price ? formatInvestmentMoney(latestPrice, item.currency, 2) : "—"],
-                  ["市值", price ? formatInvestmentMoney(marketValue, item.currency, 2) : "—"],
-                  ["未實現損益", price ? `${unrealizedGain >= 0 ? "+" : ""}${formatInvestmentMoney(unrealizedGain, item.currency, 2)}` : "—"],
-                  ["報酬率", price ? `${returnRate >= 0 ? "+" : ""}${(returnRate * 100).toFixed(2)}%` : "—"],
-                ].map(([label, value]) => <div key={label}><dt className="text-xs text-slate-400">{label}</dt><dd className="mt-1 font-medium">{value}</dd></div>)}
-              </dl>
-              {price ? <p className="mt-3 text-xs text-slate-400">Yahoo Finance · {price.price_date}</p> : null}
-            </div>;
-          }) : <Empty />}
+          {positionPnLs.length ? positionPnLs.map((item) => <PositionPnLCard key={`${item.position.market}-${item.position.ticker}`} item={item} compact />) : <Empty />}
         </div></section> : null}
 
         {tab === "cash" ? <section className="grid gap-4">
@@ -956,6 +970,70 @@ export default function InvestmentsPage() {
 function RecordSection({title,action,error,children}:{title:string;action:()=>void;error?:ResourceErrorInfo;children:React.ReactNode}) {
   return <section className="rounded-[28px] border border-white/80 bg-white/85 p-5 shadow-sm shadow-slate-200/80"><div className="flex items-center justify-between"><h2 className="text-xl font-semibold">{title}</h2><button onClick={action} className="rounded-full bg-slate-950 px-4 py-2 text-sm font-semibold text-white">＋ 新增</button></div><ResourceError error={error}/><div className="mt-3 divide-y divide-slate-100">{children || <Empty />}</div></section>;
 }
+function pnlTone(value: number | null) {
+  if (value === null || value === 0) return "text-slate-500";
+  return value > 0 ? "text-emerald-600" : "text-rose-600";
+}
+
+function formatSignedMoney(value: number | null, currency: Currency) {
+  if (value === null) return "尚未取得價格";
+  return `${value > 0 ? "+" : ""}${formatInvestmentMoney(value, currency, 2)}`;
+}
+
+function formatReturnRate(value: number | null) {
+  if (value === null) return "尚未取得價格";
+  return `${value > 0 ? "+" : ""}${value.toFixed(2)}%`;
+}
+
+function formatPositionQuantity(position: InvestmentPosition) {
+  if (position.market === "TW" && position.quantity >= 1000) {
+    const lots = position.quantity / 1000;
+    return `${Number.isInteger(lots) ? lots : lots.toFixed(3)} 張（${position.quantity.toLocaleString("zh-TW")} 股）`;
+  }
+  return `${position.quantity.toLocaleString("zh-TW")} 股`;
+}
+
+function PnLMetric({
+  label,
+  value,
+  tone = "text-slate-950",
+}: {
+  label: string;
+  value: string;
+  tone?: string;
+}) {
+  return <div><dt className="text-xs text-slate-400">{label}</dt><dd className={`mt-1 font-semibold ${tone}`}>{value}</dd></div>;
+}
+
+function PositionPnLCard({
+  item,
+  compact = false,
+}: {
+  item: PositionPnL;
+  compact?: boolean;
+}) {
+  const { position, latestPrice, marketValue, unrealizedGain, returnRate, price } = item;
+  return (
+    <article className={`${compact ? "py-4" : "rounded-[24px] bg-slate-50 p-4"}`}>
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <p className="font-semibold">{position.ticker} <span className="font-normal text-slate-500">{position.name}</span></p>
+        <p className={`font-semibold ${pnlTone(unrealizedGain)}`}>
+          {formatSignedMoney(unrealizedGain, position.currency)}
+        </p>
+      </div>
+      <dl className={`mt-3 grid grid-cols-2 gap-x-4 gap-y-3 text-sm ${compact ? "sm:grid-cols-6" : "sm:grid-cols-3"}`}>
+        <PnLMetric label="持股" value={formatPositionQuantity(position)} />
+        <PnLMetric label="成本" value={formatInvestmentMoney(position.totalCost, position.currency, 2)} />
+        <PnLMetric label="最新價格" value={latestPrice === null ? "尚未取得價格" : formatInvestmentMoney(latestPrice, position.currency, 2)} />
+        <PnLMetric label="市值" value={marketValue === null ? "尚未取得價格" : formatInvestmentMoney(marketValue, position.currency, 2)} />
+        <PnLMetric label="損益" value={formatSignedMoney(unrealizedGain, position.currency)} tone={pnlTone(unrealizedGain)} />
+        <PnLMetric label="報酬率" value={formatReturnRate(returnRate)} tone={pnlTone(returnRate)} />
+      </dl>
+      {price && latestPrice !== null ? <p className="mt-3 text-xs text-slate-400">Yahoo Finance · {price.price_date}</p> : null}
+    </article>
+  );
+}
+
 function RecordRow({title,meta,amount,onEdit,onDelete}:{title:string;meta:string;amount:string;onEdit:()=>void;onDelete:()=>void}) {
   return <div className="flex flex-wrap items-center gap-3 py-4"><div className="min-w-0 flex-1 basis-40"><p className="truncate font-semibold">{title}</p><p className="mt-1 truncate text-xs text-slate-400">{meta}</p></div><p className="shrink-0 text-sm font-semibold">{amount}</p><div className="flex w-full justify-end gap-1 sm:w-auto"><button type="button" onClick={onEdit} className="flex items-center gap-1 rounded-full bg-slate-100 px-3 py-1.5 text-xs font-semibold text-slate-600"><Pencil size={14} strokeWidth={2.2}/> 編輯</button><button type="button" onClick={onDelete} className="flex items-center gap-1 rounded-full bg-rose-50 px-3 py-1.5 text-xs font-semibold text-rose-600"><Trash2 size={14} strokeWidth={2.2}/> 刪除</button></div></div>;
 }

@@ -53,6 +53,25 @@ export type InvestmentPrice = {
   updatedAt: string;
 };
 
+export type PositionPnL = {
+  position: InvestmentPosition;
+  latestPrice: number | null;
+  marketValue: number | null;
+  unrealizedGain: number | null;
+  returnRate: number | null;
+  price: InvestmentPrice | null;
+};
+
+export type PortfolioPnL = {
+  currency: Currency;
+  totalCost: number;
+  marketValue: number | null;
+  unrealizedGain: number | null;
+  returnRate: number | null;
+  hasPrices: boolean;
+  positions: PositionPnL[];
+};
+
 export type FxRecord = {
   id: string;
   date: string;
@@ -314,6 +333,88 @@ export function calculatePositions(
     .sort((a, b) =>
       `${a.market}:${a.ticker}`.localeCompare(`${b.market}:${b.ticker}`),
     );
+}
+
+export function calculatePositionPnL(
+  position: InvestmentPosition,
+  prices: InvestmentPrice[],
+): PositionPnL {
+  const price =
+    prices.find(
+      (candidate) =>
+        candidate.market === position.market &&
+        normalizeSymbol(candidate.symbol, candidate.market) ===
+          normalizeSymbol(position.ticker, position.market),
+    ) ?? null;
+  const latestPrice =
+    price && Number.isFinite(price.price) && price.price > 0
+      ? price.price
+      : null;
+
+  if (latestPrice === null) {
+    return {
+      position,
+      latestPrice: null,
+      marketValue: null,
+      unrealizedGain: null,
+      returnRate: null,
+      price,
+    };
+  }
+
+  const marketValue = position.quantity * latestPrice;
+  const unrealizedGain = marketValue - position.totalCost;
+  const returnRate =
+    position.totalCost > 0 ? (unrealizedGain / position.totalCost) * 100 : null;
+
+  return {
+    position,
+    latestPrice,
+    marketValue,
+    unrealizedGain,
+    returnRate,
+    price,
+  };
+}
+
+export function calculatePortfolioPnL(
+  positions: InvestmentPosition[],
+  prices: InvestmentPrice[],
+): PortfolioPnL[] {
+  return (["TWD", "USD"] as const).map((currency) => {
+    const positionPnLs = positions
+      .filter((position) => position.currency === currency)
+      .map((position) => calculatePositionPnL(position, prices));
+    const totalCost = positionPnLs.reduce(
+      (sum, item) => sum + item.position.totalCost,
+      0,
+    );
+    const hasPrices =
+      positionPnLs.length > 0 &&
+      positionPnLs.every((item) => item.marketValue !== null);
+    const marketValue = hasPrices
+      ? positionPnLs.reduce(
+          (sum, item) => sum + (item.marketValue ?? 0),
+          0,
+        )
+      : null;
+    const unrealizedGain =
+      marketValue === null ? null : marketValue - totalCost;
+    const returnRate =
+      unrealizedGain !== null && totalCost > 0
+        ? (unrealizedGain / totalCost) * 100
+        : null;
+
+    return {
+      currency,
+      totalCost,
+      marketValue,
+      unrealizedGain,
+      returnRate,
+      hasPrices,
+      positions: positionPnLs,
+    };
+  });
 }
 
 export function formatInvestmentMoney(
