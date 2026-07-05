@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { useCategories } from "../categories-context";
 import { formatCategoryLabel } from "../lib/categories";
 import { createTransaction, getTransactions } from "../lib/googleSheets";
+import { getTransactionDisplayName } from "../lib/transactions";
 import CalculatorModal from "../ui/calculator-modal";
 
 type EntryType = "收入" | "支出";
@@ -18,6 +19,7 @@ type Entry = {
   category: string;
   amount: number;
   note: string;
+  memo?: string;
 };
 
 function formatMoney(value: number) {
@@ -47,6 +49,8 @@ function normalizeEntry(transaction: Record<string, unknown>, index: number): En
     category: String(transaction.category ?? ""),
     amount: Number(transaction.amount ?? 0),
     note: String(transaction.note ?? ""),
+    memo:
+      transaction.memo === undefined ? undefined : String(transaction.memo),
   };
 }
 
@@ -344,12 +348,12 @@ export default function AddRecordPage() {
 
               return (
                 <div
-                  key={`${item.date}-${item.note}-${index}`}
+                  key={`${item.date}-${item.id}-${index}`}
                   className="flex items-center justify-between gap-4 py-4"
                 >
                   <div className="min-w-0">
                     <p className="truncate text-sm font-semibold text-slate-950">
-                      {item.note}
+                      {getTransactionDisplayName(item)}
                     </p>
                     <p className="mt-1 truncate text-xs font-medium text-slate-400">
                       {item.date} · {item.category}

@@ -9,6 +9,7 @@ import {
 } from "./data";
 import { dedupeCategories } from "./lib/categories";
 import { getCategories, getTransactions } from "./lib/googleSheets";
+import { getTransactionDisplayName } from "./lib/transactions";
 
 const periods = ["本月", "上月", "本季", "今年", "累積餘額"] as const;
 
@@ -105,6 +106,7 @@ type Transaction = {
   categoryId?: string;
   amount: number;
   note: string;
+  memo?: string;
   sourceType?: string;
   recurringId?: string | null;
   expenseType?: string | null;
@@ -262,6 +264,8 @@ function normalizeTransaction(
         : String(transaction.categoryId),
     amount: Number(transaction.amount ?? 0),
     note: String(transaction.note ?? ""),
+    memo:
+      transaction.memo === undefined ? undefined : String(transaction.memo),
     sourceType:
       transaction.sourceType === undefined
         ? undefined
@@ -818,7 +822,7 @@ export default function Home() {
                       </div>
                       <div className="min-w-0">
                         <p className="truncate text-sm font-semibold text-slate-950">
-                          {item.note}
+                          {getTransactionDisplayName(item)}
                         </p>
                         <p className="mt-1 truncate text-xs font-medium text-slate-400">
                           {formatDate(item.date)} · {item.category}

@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useCategories } from "../categories-context";
 import { formatCategoryLabel } from "../lib/categories";
+import { getTransactionDisplayName } from "../lib/transactions";
 import {
   createTransaction,
   deleteTransaction as deleteSheetTransaction,
@@ -21,6 +22,7 @@ type Transaction = {
   categoryId?: string;
   amount: number;
   note: string;
+  memo?: string;
   sourceType: string;
   recurringId: string | null;
   expenseType: string | null;
@@ -187,6 +189,8 @@ function normalizeTransaction(
         : String(transaction.categoryId),
     amount: Number(transaction.amount ?? 0),
     note: String(transaction.note ?? ""),
+    memo:
+      transaction.memo === undefined ? undefined : String(transaction.memo),
     sourceType,
     recurringId:
       transaction.recurringId === undefined || transaction.recurringId === null
@@ -564,8 +568,8 @@ function TransactionsContent() {
 
     const message =
       transaction.sourceType === "recurring"
-        ? `確定要刪除「${transaction.note}」嗎？這只會刪除此筆交易，不會刪除固定支出規則。`
-        : `確定要刪除「${transaction.note}」嗎？`;
+        ? `確定要刪除「${getTransactionDisplayName(transaction)}」嗎？這只會刪除此筆交易，不會刪除固定支出規則。`
+        : `確定要刪除「${getTransactionDisplayName(transaction)}」嗎？`;
     const confirmed = window.confirm(message);
 
     if (!confirmed) {
@@ -688,7 +692,7 @@ function TransactionsContent() {
                       <div className="min-w-0">
                         <div className="flex min-w-0 flex-wrap items-center gap-2">
                           <p className="truncate text-sm font-semibold text-slate-950">
-                            {item.note}
+                            {getTransactionDisplayName(item)}
                           </p>
                           <span
                             className={`rounded-full px-2 py-0.5 text-xs font-medium ${
