@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { useCategories } from "./categories-context";
 import {
   categories as fallbackCategories,
@@ -9,7 +10,19 @@ import {
 } from "./data";
 import { dedupeCategories } from "./lib/categories";
 import { getCategories, getTransactions } from "./lib/googleSheets";
-import { getTransactionDisplayName } from "./lib/transactions";
+import {
+  formatTransactionDate,
+  getTransactionDisplayName,
+  isExpenseTransaction,
+  isIncomeTransaction,
+  isRecurringExpenseTransaction,
+  isTransactionInDateRange,
+  normalizeTransaction,
+  parseTransactionDate,
+  type Transaction,
+} from "./lib/transactions";
+import { getMonthDateRange, normalizeMonth } from "./lib/month";
+import { MonthSwitcher } from "./ui/month-switcher";
 
 const periods = ["本月", "上月", "本季", "今年", "累積餘額"] as const;
 
@@ -56,63 +69,7 @@ function formatMoney(value: number) {
   }).format(Math.round(value));
 }
 
-function parseDateValue(value: string) {
-  if (!value) {
-    return null;
-  }
-
-  const dateOnlyMatch = value.match(/^(\d{4})-(\d{2})-(\d{2})$/);
-
-  if (dateOnlyMatch) {
-    const [, year, month, day] = dateOnlyMatch;
-
-    return new Date(Number(year), Number(month) - 1, Number(day));
-  }
-
-  const parsed = new Date(value);
-
-  if (Number.isNaN(parsed.getTime())) {
-    return null;
-  }
-
-  return parsed;
-}
-
-function getTransactionDateKey(date: string) {
-  const parsed = parseDateValue(date);
-
-  return parsed ? toDateKey(parsed) : "";
-}
-
-function formatDate(date: string) {
-  const parsed = parseDateValue(date);
-
-  if (!parsed) {
-    return date;
-  }
-
-  return new Intl.DateTimeFormat("zh-TW", {
-    month: "long",
-    day: "numeric",
-  }).format(parsed);
-}
-
 type Period = (typeof periods)[number];
-type Transaction = {
-  id: string;
-  date: string;
-  type: string;
-  category: string;
-  categoryId?: string;
-  amount: number;
-  note: string;
-  memo?: string;
-  sourceType?: string;
-  recurringId?: string | null;
-  expenseType?: string | null;
-  createdAt?: string;
-};
-
 type DashboardCategory = {
   id: string;
   name: string;
@@ -206,28 +163,14 @@ function filterTransactionsByPeriod(
   }
 
   return sourceTransactions.filter((transaction) => {
-    const dateKey = getTransactionDateKey(transaction.date);
+    const date = parseTransactionDate(transaction.date);
 
-    return dateKey >= range.start && dateKey <= range.end;
+    return (
+      date !== null &&
+      toDateKey(date) >= range.start &&
+      toDateKey(date) <= range.end
+    );
   });
-}
-
-function isIncomeTransaction(transaction: Transaction) {
-  const type = transaction.type.trim();
-
-  return type === "收入" || type === "income";
-}
-
-function isExpenseTransaction(transaction: Transaction) {
-  const type = transaction.type.trim();
-
-  return type === "支出" || type === "expense";
-}
-
-function isRecurringExpenseTransaction(transaction: Transaction) {
-  return (
-    isExpenseTransaction(transaction) && transaction.sourceType === "recurring"
-  );
 }
 
 function calculateSummary(sourceTransactions: Transaction[]) {
@@ -246,42 +189,6 @@ function calculateSummary(sourceTransactions: Transaction[]) {
     expense,
     balance: income - expense,
     fixedExpense,
-  };
-}
-
-function normalizeTransaction(
-  transaction: Record<string, unknown>,
-  index: number,
-): Transaction {
-  return {
-    id: String(transaction.id ?? `sheet-tx-${index}`),
-    date: String(transaction.date ?? ""),
-    type: String(transaction.type ?? "").trim(),
-    category: String(transaction.category ?? ""),
-    categoryId:
-      transaction.categoryId === undefined
-        ? undefined
-        : String(transaction.categoryId),
-    amount: Number(transaction.amount ?? 0),
-    note: String(transaction.note ?? ""),
-    memo:
-      transaction.memo === undefined ? undefined : String(transaction.memo),
-    sourceType:
-      transaction.sourceType === undefined
-        ? undefined
-        : String(transaction.sourceType),
-    recurringId:
-      transaction.recurringId === undefined || transaction.recurringId === null
-        ? null
-        : String(transaction.recurringId),
-    expenseType:
-      transaction.expenseType === undefined || transaction.expenseType === null
-        ? null
-        : String(transaction.expenseType),
-    createdAt:
-      transaction.createdAt === undefined
-        ? undefined
-        : String(transaction.createdAt),
   };
 }
 
@@ -513,6 +420,20 @@ function KpiIcon({ type }: { type: (typeof kpis)[number]["icon"] }) {
   );
 }
 
+function MonthParamSync({
+  onMonthChange,
+}: {
+  onMonthChange: (month: string) => void;
+}) {
+  const searchParams = useSearchParams();
+
+  useEffect(() => {
+    onMonthChange(normalizeMonth(searchParams.get("month")));
+  }, [onMonthChange, searchParams]);
+
+  return null;
+}
+
 export default function Home() {
   const { categories: contextCategories } = useCategories();
   const [sourceTransactions, setSourceTransactions] = useState<Transaction[]>(
@@ -526,6 +447,7 @@ export default function Home() {
   const [transactionsErrorMessage, setTransactionsErrorMessage] = useState("");
   const [activePeriod, setActivePeriod] =
     useState<(typeof periods)[number]>("本月");
+  const [selectedMonth, setSelectedMonth] = useState(normalizeMonth());
 
   useEffect(() => {
     let isMounted = true;
@@ -592,12 +514,16 @@ export default function Home() {
   const recentTransactions = [...filteredTransactions].sort((a, b) =>
     (b.createdAt || b.date).localeCompare(a.createdAt || a.date),
   ).slice(0, 5);
+  const selectedMonthRange = getMonthDateRange(selectedMonth);
+  const monthTransactions = sourceTransactions.filter((transaction) =>
+    isTransactionInDateRange(transaction, selectedMonthRange),
+  );
 
   const expenseCategories = sourceCategories
     .filter((category) => category.type === "expense")
     .map((category) => ({
       ...category,
-      amount: filteredTransactions
+      amount: monthTransactions
         .filter(
           (transaction) =>
             isExpenseTransaction(transaction) &&
@@ -633,6 +559,9 @@ export default function Home() {
 
   return (
     <main className="min-h-screen overflow-x-hidden bg-[#f6f7fb] text-slate-950">
+      <Suspense fallback={null}>
+        <MonthParamSync onMonthChange={setSelectedMonth} />
+      </Suspense>
       <div className="fixed inset-0 -z-10 bg-[radial-gradient(circle_at_0%_0%,#dbeafe_0,transparent_35%),radial-gradient(circle_at_100%_0%,#fce7f3_0,transparent_30%),linear-gradient(180deg,#fbfcff_0%,#eef2ff_100%)]" />
 
       <section className="mx-auto flex w-full max-w-6xl flex-col gap-5 px-4 pb-[calc(7rem+env(safe-area-inset-bottom))] pt-5 sm:px-6 lg:px-8 lg:pb-10">
@@ -721,16 +650,16 @@ export default function Home() {
 
         <section className="grid gap-4 lg:grid-cols-[0.95fr_1.05fr]">
           <article className="rounded-[32px] border border-white/75 bg-white/80 p-5 shadow-sm shadow-slate-200/80 backdrop-blur-xl sm:p-6">
-            <div className="flex items-start justify-between gap-4">
+            <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
               <div>
                 <p className="text-sm font-medium text-slate-500">支出分類</p>
                 <h2 className="mt-1 text-xl font-semibold tracking-normal">
-                  {activePeriod}花費分布
+                  本月花費分布
                 </h2>
               </div>
-              <span className="rounded-full bg-slate-100 px-3 py-1 text-sm font-medium text-slate-600">
-                {formatMoney(totalCategoryExpense)}
-              </span>
+              <Suspense fallback={null}>
+                <MonthSwitcher month={selectedMonth} />
+              </Suspense>
             </div>
 
             <div className="mt-7 flex flex-col items-center gap-7 sm:flex-row">
@@ -750,9 +679,10 @@ export default function Home() {
 
               <div className="grid w-full gap-3">
                 {expenseCategories.map((item, index) => (
-                  <div
+                  <Link
                     key={`${item.id || item.name}-${index}`}
-                    className="flex items-center justify-between gap-3"
+                    href={`/categories/${encodeURIComponent(item.name)}?month=${selectedMonth}`}
+                    className="flex items-center justify-between gap-3 rounded-2xl p-2 transition hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-slate-200"
                   >
                     <div className="flex min-w-0 items-center gap-3">
                       <span className="grid h-9 w-9 shrink-0 place-items-center rounded-2xl bg-slate-100 text-base">
@@ -762,25 +692,42 @@ export default function Home() {
                         <p className="truncate text-sm font-semibold text-slate-700">
                           {item.name}
                         </p>
-                        <div className="mt-1 h-1.5 w-24 rounded-full bg-slate-100">
-                          <div
-                            className="h-full rounded-full"
-                            style={{
-                              width:
-                                totalCategoryExpense > 0
-                                  ? `${(item.amount / totalCategoryExpense) * 100}%`
-                                  : "0%",
-                              backgroundColor: item.color,
-                            }}
-                          />
+                        <div className="mt-1 flex items-center gap-2">
+                          <div className="h-1.5 w-24 rounded-full bg-slate-100">
+                            <div
+                              className="h-full rounded-full"
+                              style={{
+                                width:
+                                  totalCategoryExpense > 0
+                                    ? `${(item.amount / totalCategoryExpense) * 100}%`
+                                    : "0%",
+                                backgroundColor: item.color,
+                              }}
+                            />
+                          </div>
+                          <span className="text-xs font-medium text-slate-400">
+                            {totalCategoryExpense > 0
+                              ? `${Math.round((item.amount / totalCategoryExpense) * 100)}%`
+                              : "0%"}
+                          </span>
                         </div>
                       </div>
                     </div>
-                    <span className="text-sm font-semibold text-slate-950">
-                      {formatMoney(item.amount)}
-                    </span>
-                  </div>
+                    <div className="flex shrink-0 items-center gap-2">
+                      <span className="text-sm font-semibold text-slate-950">
+                        {formatMoney(item.amount)}
+                      </span>
+                      <span className="text-lg font-semibold text-slate-300">
+                        ›
+                      </span>
+                    </div>
+                  </Link>
                 ))}
+                {expenseCategories.length === 0 ? (
+                  <p className="rounded-2xl bg-slate-50 p-4 text-sm font-medium text-slate-500">
+                    這個月份還沒有支出分類資料
+                  </p>
+                ) : null}
               </div>
             </div>
           </article>
@@ -825,7 +772,7 @@ export default function Home() {
                           {getTransactionDisplayName(item)}
                         </p>
                         <p className="mt-1 truncate text-xs font-medium text-slate-400">
-                          {formatDate(item.date)} · {item.category}
+                          {formatTransactionDate(item.date)} · {item.category}
                         </p>
                       </div>
                     </div>
