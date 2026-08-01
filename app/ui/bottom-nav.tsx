@@ -10,6 +10,7 @@ import {
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useRef, useState } from "react";
+import { useCategories } from "../categories-context";
 
 const items = [
   { id: "home", label: "首頁", href: "/", icon: House },
@@ -31,7 +32,10 @@ const items = [
 export default function BottomNav() {
   const pathname = usePathname();
   const router = useRouter();
+  const { categoriesReady, ensureCategories } = useCategories();
   const [quickMenuOpen, setQuickMenuOpen] = useState(false);
+  const [categoryMessage, setCategoryMessage] = useState("");
+  const [isOpeningForm, setIsOpeningForm] = useState(false);
   const pressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const longPressTriggered = useRef(false);
   const active =
@@ -59,9 +63,21 @@ export default function BottomNav() {
     }, 500);
   }
 
-  function openTransactionForm(type: "expense" | "income" | "transfer") {
+  async function openTransactionForm(type: "expense" | "income" | "transfer") {
     clearPressTimer();
     setQuickMenuOpen(false);
+    setCategoryMessage("");
+    if (type !== "transfer" && !categoriesReady) {
+      setIsOpeningForm(true);
+      try {
+        await ensureCategories(2000);
+      } catch {
+        setCategoryMessage("分類資料載入失敗，請稍後再試。");
+        return;
+      } finally {
+        setIsOpeningForm(false);
+      }
+    }
     router.push(`/transactions?new=${type}`);
   }
 
@@ -70,7 +86,7 @@ export default function BottomNav() {
       longPressTriggered.current = false;
       return;
     }
-    openTransactionForm("expense");
+    void openTransactionForm("expense");
   }
 
   return (
@@ -93,7 +109,7 @@ export default function BottomNav() {
                 key={item.type}
                 type="button"
                 onClick={() =>
-                  openTransactionForm(
+                  void openTransactionForm(
                     item.type as "expense" | "income" | "transfer",
                   )
                 }
@@ -114,6 +130,11 @@ export default function BottomNav() {
       ) : null}
 
       <nav className="fixed bottom-[max(12px,env(safe-area-inset-bottom))] left-0 right-0 z-50 border-t border-slate-200/80 bg-white shadow-[0_-10px_30px_rgba(15,23,42,0.07)]">
+        {categoryMessage ? (
+          <p className="absolute bottom-full left-1/2 mb-3 w-max max-w-[calc(100vw-2rem)] -translate-x-1/2 rounded-full bg-rose-50 px-4 py-2 text-sm font-medium text-rose-600 shadow-lg">
+            {categoryMessage}
+          </p>
+        ) : null}
         <div className="mx-auto grid h-[82px] max-w-xl grid-cols-5">
           {items.slice(0, 2).map((item) => {
           const Icon = item.icon;
@@ -151,6 +172,7 @@ export default function BottomNav() {
             onPointerLeave={clearPressTimer}
             onClick={handlePlusClick}
             onContextMenu={(event) => event.preventDefault()}
+            disabled={isOpeningForm}
             className="group flex flex-col items-center justify-center gap-1 text-sm font-medium text-[#0B132B]"
             aria-label="新增記帳；長按開啟快速選單"
             aria-expanded={quickMenuOpen}
@@ -158,7 +180,7 @@ export default function BottomNav() {
             <span className="grid h-14 w-14 place-items-center rounded-full bg-[#0B132B] text-white shadow-lg shadow-slate-300 transition active:scale-95">
               <Plus size={28} strokeWidth={2.5} />
             </span>
-            新增
+            {isOpeningForm ? "載入中" : "新增"}
           </button>
           {items.slice(2).map((item) => {
             const Icon = item.icon;

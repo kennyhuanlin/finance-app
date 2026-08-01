@@ -345,6 +345,28 @@ async function writeValues(
   );
 }
 
+async function writeCellValues(
+  sheet: SupportedSheet,
+  cells: Array<{ row: number; column: number; value: unknown }>,
+) {
+  const { spreadsheetId } = getConfig();
+  const columnName = (column: number) =>
+    String.fromCharCode("A".charCodeAt(0) + column);
+  return googleWriteRequest(
+    `${SHEETS_API}/${encodeURIComponent(spreadsheetId)}/values:batchUpdate`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        valueInputOption: "RAW",
+        data: cells.map(({ row, column, value }) => ({
+          range: `${sheet}!${columnName(column)}${row}`,
+          values: [[normalizeCell(value)]],
+        })),
+      }),
+    },
+  );
+}
+
 function normalizeCell(value: unknown) {
   if (value === null || value === undefined) return "";
   if (typeof value === "object") return JSON.stringify(value);
@@ -547,13 +569,14 @@ export async function updateWorksheetRow(
   }
 
   const next: Record<string, unknown> = { ...rows[index], ...patch, id };
-  await writeValues(
-    sheet,
-    `A${index + 2}`,
-    [headers.map((header) => normalizeCell(next[header]))],
+  const cells = headers.flatMap((header, column) =>
+    Object.prototype.hasOwnProperty.call(patch, header) || header === "id"
+      ? [{ row: index + 2, column, value: next[header] }]
+      : [],
   );
+  await writeCellValues(sheet, cells);
   invalidateWorksheetCache(sheet);
-  return { ok: true, id };
+  return { ok: true, id, data: next };
 }
 
 export async function deleteWorksheetRow(sheet: SupportedSheet, id: string) {

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import Link from "next/link";
 import {
   type Category,
@@ -148,7 +148,6 @@ export default function CategoriesPage() {
     addCategory,
     updateCategory,
     deleteCategory,
-    refreshCategories,
     isLoadingCategories,
   } = useCategories();
   const [editingCategory, setEditingCategory] = useState<CategoryForm | null>(
@@ -169,10 +168,6 @@ export default function CategoriesPage() {
   );
   const visibleCategories =
     activeTab === "expense" ? expenseCategories : incomeCategories;
-
-  useEffect(() => {
-    refreshCategories();
-  }, [refreshCategories]);
 
   function openCreateForm() {
     setMessage("");

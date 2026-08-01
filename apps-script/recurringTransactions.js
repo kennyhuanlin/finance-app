@@ -26,6 +26,10 @@ function recurringTransactions() {
       return;
     }
 
+    if (getRemainingCount(rule.remainingCount) === 0) {
+      return;
+    }
+
     const nextRunDate = toDateKey(rule.nextRunDate);
 
     if (!nextRunDate || nextRunDate > todayKey) {
@@ -33,6 +37,10 @@ function recurringTransactions() {
     }
 
     const endDate = toDateKey(rule.endDate);
+
+    if (endDate && endDate < todayKey) {
+      return;
+    }
 
     if (endDate && nextRunDate > endDate) {
       updateRow(rulesSheet, ruleTable.headers, rowNumber, {
@@ -141,8 +149,19 @@ function getNextRemainingCount(value) {
   return Math.max(0, count - 1);
 }
 
+function getRemainingCount(value) {
+  if (value === "" || value === null || value === undefined) return null;
+  const count = Number(value);
+  return Number.isFinite(count) ? count : null;
+}
+
 function isEnabled(value) {
-  return value === true || String(value).toLowerCase() === "true";
+  if (value === true) return true;
+  if (value === false) return false;
+  const normalized = String(value || "").trim().toLowerCase();
+  if (["true", "1", "是", "啟用", "active"].indexOf(normalized) >= 0) return true;
+  if (["false", "0", "否", "停用", "暫停", "paused"].indexOf(normalized) >= 0) return false;
+  return true;
 }
 
 function toDateKey(value) {

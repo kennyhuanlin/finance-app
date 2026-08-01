@@ -2,8 +2,8 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { dedupeCategories } from "../lib/categories";
-import { getCategories, getTransactions } from "../lib/googleSheets";
+import { useCategories } from "../categories-context";
+import { getTransactions } from "../lib/googleSheets";
 
 const periods = ["本月", "上月", "本季", "今年", "累積餘額"] as const;
 type Period = (typeof periods)[number];
@@ -332,19 +332,6 @@ function normalizeTransaction(
   };
 }
 
-function normalizeCategory(
-  category: Record<string, unknown>,
-  index: number,
-): Category {
-  return {
-    id: String(category.id ?? `sheet-category-${index}`),
-    name: String(category.name ?? ""),
-    emoji: String(category.emoji ?? "📦"),
-    type: String(category.type ?? "expense"),
-    color: String(category.color ?? "#64748b"),
-  };
-}
-
 function BackIcon() {
   return (
     <svg
@@ -557,18 +544,15 @@ function RankingCard({
 }
 
 export default function AnalyticsPage() {
+  const { categories } = useCategories();
   const [activePeriod, setActivePeriod] = useState<Period>("本月");
   const [transactions, setTransactions] = useState<Transaction[]>([]);
-  const [categories, setCategories] = useState<Category[]>([]);
 
   useEffect(() => {
     let isMounted = true;
 
-    Promise.all([
-      getTransactions<Record<string, unknown>>(),
-      getCategories<Record<string, unknown>>(),
-    ])
-      .then(([sheetTransactions, sheetCategories]) => {
+    getTransactions<Record<string, unknown>>()
+      .then((sheetTransactions) => {
         if (!isMounted) {
           return;
         }
@@ -578,18 +562,10 @@ export default function AnalyticsPage() {
             normalizeTransaction(transaction, index),
           ),
         );
-        setCategories(
-          dedupeCategories(
-            sheetCategories.map((category, index) =>
-              normalizeCategory(category, index),
-            ),
-          ),
-        );
       })
       .catch(() => {
         if (isMounted) {
           setTransactions([]);
-          setCategories([]);
         }
       });
 

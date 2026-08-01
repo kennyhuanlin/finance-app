@@ -136,12 +136,12 @@ async function mutateSheetRow<T extends Record<string, unknown>>(
     body: JSON.stringify(data),
   });
 
-  if (!response.ok) {
-    const body = (await response.json().catch(() => null)) as {
+  const body = (await response.json().catch(() => null)) as {
       error?: string;
       resource?: string;
       id?: string;
     } | null;
+  if (!response.ok || body?.error) {
     throw new SheetRequestError(
       sheet,
       response.status,
@@ -159,7 +159,7 @@ async function mutateSheetRow<T extends Record<string, unknown>>(
   ) {
     clearInvestmentBundleCache();
   }
-  return response.json();
+  return body;
 }
 
 export function clearInvestmentBundleCache() {

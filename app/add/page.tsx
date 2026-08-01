@@ -77,9 +77,20 @@ function BackIcon() {
 
 export default function AddRecordPage() {
   const router = useRouter();
-  const { categories } = useCategories();
-  const expenseCategories = categories.filter((item) => item.type === "expense");
-  const incomeCategories = categories.filter((item) => item.type === "income");
+  const {
+    categories,
+    categoriesReady,
+    categoriesError,
+    isLoadingCategories,
+  } = useCategories();
+  const expenseCategories = useMemo(
+    () => categories.filter((item) => item.type === "expense"),
+    [categories],
+  );
+  const incomeCategories = useMemo(
+    () => categories.filter((item) => item.type === "income"),
+    [categories],
+  );
   const [entryType, setEntryType] = useState<EntryType>("支出");
   const [date, setDate] = useState(today);
   const [category, setCategory] = useState("");
@@ -132,17 +143,18 @@ export default function AddRecordPage() {
 
   const selectedCategory = categoryOptions.some((item) => item.name === category)
     ? category
-    : categoryOptions[0]?.name ?? "";
+    : categoriesReady
+      ? categoryOptions[0]?.name ?? ""
+      : "";
   const recentEntries = entries.slice(0, 5);
-  const canSubmit = Number(amount) > 0 && selectedCategory.trim().length > 0;
+  const canSubmit =
+    categoriesReady &&
+    Number(amount) > 0 &&
+    selectedCategory.trim().length > 0;
 
   function handleTypeChange(type: EntryType) {
     setEntryType(type);
-    setCategory(
-      type === "收入"
-        ? incomeCategories[0]?.name ?? ""
-        : expenseCategories[0]?.name ?? "",
-    );
+    setCategory("");
     if (type === "支出") {
       setNecessity("必要");
     }
@@ -276,14 +288,29 @@ export default function AddRecordPage() {
               <select
                 value={selectedCategory}
                 onChange={(event) => setCategory(event.target.value)}
+                disabled={!categoriesReady}
                 className="h-13 rounded-[22px] border border-transparent bg-slate-50 px-4 text-base font-medium text-slate-950 outline-none transition focus:border-slate-200 focus:bg-white"
               >
+                {!categoriesReady ? (
+                  <option value="">
+                    {categoriesError
+                      ? "分類載入失敗"
+                      : isLoadingCategories
+                        ? "載入分類中..."
+                        : "沒有可用分類"}
+                  </option>
+                ) : null}
                 {categoryOptions.map((item, index) => (
                   <option key={`${item.id}-${index}`} value={item.name}>
                     {formatCategoryLabel(item)}
                   </option>
                 ))}
               </select>
+              {categoriesError && !isLoadingCategories ? (
+                <span className="text-sm font-medium text-rose-600">
+                  分類載入失敗，請稍後再試。
+                </span>
+              ) : null}
             </label>
 
             {entryType === "支出" ? (

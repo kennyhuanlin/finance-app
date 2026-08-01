@@ -4,10 +4,12 @@ import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useCategories } from "../categories-context";
 import { formatCategoryLabel } from "../lib/categories";
+import { normalizeBoolean } from "../lib/boolean";
 import {
   createRecurringRule,
   deleteRecurringRule,
   getRecurringRules,
+  SheetRequestError,
   updateRecurringRule,
 } from "../lib/googleSheets";
 
@@ -277,11 +279,7 @@ function normalizeRecurringRule(
 ): RecurringRule {
   const frequency = String(rule.frequency ?? "monthly").trim() || "monthly";
   const startDate = normalizeDateOnly(rule.startDate);
-  const rawEnabled = rule.enabled ?? rule.isActive ?? "";
-  const enabledText = String(rawEnabled).trim().toLowerCase();
-  const enabled = !["false", "否", "停用", "0", "paused", "inactive"].includes(
-    enabledText,
-  );
+  const enabled = normalizeBoolean(rule.enabled ?? rule.isActive, true);
   const rawType = String(rule.type ?? "").trim().toLowerCase();
   const type =
     rawType.includes("income") || rawType.includes("收入") ? "收入" : "支出";
@@ -438,6 +436,14 @@ export default function RecurringPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [deletingRuleId, setDeletingRuleId] = useState<string | null>(null);
+  const [updatingRuleId, setUpdatingRuleId] = useState<string | null>(null);
+
+  async function loadRules() {
+    const sheetRules = await getRecurringRules<Record<string, unknown>>();
+    setRules(
+      sheetRules.map((rule, index) => normalizeRecurringRule(rule, index)),
+    );
+  }
 
   useEffect(() => {
     let isMounted = true;
@@ -493,27 +499,29 @@ export default function RecurringPage() {
   );
   const monthlyNetFlow = monthlyIncomeTotal - monthlyExpenseTotal;
 
-  function toggleRule(id: string) {
-    setRules((current) =>
-      current.map((rule) => {
-        if (rule.id !== id) {
-          return rule;
-        }
+  async function toggleRule(rule: RecurringRule) {
+    if (updatingRuleId) return;
 
-        if (rule.status === "active") {
-          return { ...rule, enabled: false, status: "paused" };
-        }
-
-        return {
-          ...rule,
-          enabled: true,
-          status: "active",
-          nextRunDate: rule.manualNextRunDate
-            ? rule.nextRunDate
-            : addPeriod(todayDateOnly(), rule.frequency),
-        };
-      }),
-    );
+    const enabled = !rule.enabled;
+    setUpdatingRuleId(rule.id);
+    setStatusMessage("");
+    try {
+      await updateRecurringRule(rule.id, {
+        id: rule.id,
+        enabled,
+      });
+      await loadRules();
+    } catch (error) {
+      const resource =
+        error instanceof SheetRequestError ? error.resource : "recurring_rules";
+      const status = error instanceof SheetRequestError ? error.status : 0;
+      const message = error instanceof Error ? error.message : "未知錯誤";
+      setStatusMessage(
+        `固定收支狀態更新失敗 · resource ${resource} · status ${status || "unknown"} · ${message}`,
+      );
+    } finally {
+      setUpdatingRuleId(null);
+    }
   }
 
   function openCreateForm() {
@@ -991,10 +999,11 @@ export default function RecurringPage() {
                     </button>
                     <button
                       type="button"
-                      onClick={() => toggleRule(rule.id)}
+                      onClick={() => toggleRule(rule)}
+                      disabled={updatingRuleId !== null}
                       className={`relative h-8 w-14 rounded-full p-1 transition ${
                         rule.status === "active" ? "bg-emerald-500" : "bg-slate-300"
-                      }`}
+                      } disabled:cursor-not-allowed disabled:opacity-60`}
                       aria-pressed={rule.status === "active"}
                       aria-label={`${rule.name}${rule.status === "active" ? "暫停" : "啟用"}`}
                     >
@@ -1004,6 +1013,13 @@ export default function RecurringPage() {
                         }`}
                       />
                     </button>
+                    <span className="min-w-14 text-xs font-semibold text-slate-500">
+                      {updatingRuleId === rule.id
+                        ? "處理中..."
+                        : rule.enabled
+                          ? "暫停"
+                          : "恢復"}
+                    </span>
                   </div>
                 </div>
               </article>

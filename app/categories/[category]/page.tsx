@@ -5,12 +5,8 @@ import Link from "next/link";
 import { ArrowLeft } from "lucide-react";
 import { useSearchParams } from "next/navigation";
 import { useCategories } from "../../categories-context";
-import {
-  categories as fallbackCategories,
-  transactions as fallbackTransactions,
-} from "../../data";
-import { dedupeCategories } from "../../lib/categories";
-import { getCategories, getTransactions } from "../../lib/googleSheets";
+import { transactions as fallbackTransactions } from "../../data";
+import { getTransactions } from "../../lib/googleSheets";
 import {
   formatTransactionDate,
   getTransactionDisplayName,
@@ -38,19 +34,6 @@ function formatMoney(value: number) {
     currency: "TWD",
     maximumFractionDigits: 0,
   }).format(Math.round(value));
-}
-
-function normalizeCategory(
-  category: Record<string, unknown>,
-  index: number,
-): DashboardCategory {
-  return {
-    id: String(category.id ?? `sheet-category-${index}`),
-    name: String(category.name ?? ""),
-    emoji: String(category.emoji ?? "📦"),
-    type: String(category.type ?? "expense"),
-    color: String(category.color ?? "#64748b"),
-  };
 }
 
 function safeDecodeCategory(category: string) {
@@ -87,32 +70,26 @@ export default function CategoryDetailPage({
   const [sourceTransactions, setSourceTransactions] = useState<Transaction[]>(
     [],
   );
-  const [sourceCategories, setSourceCategories] = useState<DashboardCategory[]>(
-    [],
-  );
+  const sourceCategories: DashboardCategory[] = contextCategories;
   const [loadState, setLoadState] = useState<LoadState>("loading");
   const [errorMessage, setErrorMessage] = useState("");
 
   useEffect(() => {
     let isMounted = true;
 
-    Promise.allSettled([
-      getTransactions<Record<string, unknown>>(),
-      getCategories<Record<string, unknown>>(),
-    ]).then(([transactionsResult, categoriesResult]) => {
+    getTransactions<Record<string, unknown>>().then((sheetTransactions) => {
       if (!isMounted) {
         return;
       }
-
-      if (transactionsResult.status === "fulfilled") {
-        setSourceTransactions(
-          transactionsResult.value.map((transaction, index) =>
-            normalizeTransaction(transaction, index),
-          ),
-        );
-        setLoadState("success");
-        setErrorMessage("");
-      } else {
+      setSourceTransactions(
+        sheetTransactions.map((transaction, index) =>
+          normalizeTransaction(transaction, index),
+        ),
+      );
+      setLoadState("success");
+      setErrorMessage("");
+    }).catch((error) => {
+      if (isMounted) {
         setSourceTransactions(
           fallbackTransactions.map((transaction, index) =>
             normalizeTransaction(transaction, index),
@@ -120,36 +97,17 @@ export default function CategoryDetailPage({
         );
         setLoadState("error");
         setErrorMessage(
-          transactionsResult.reason instanceof Error
-            ? transactionsResult.reason.message
+          error instanceof Error
+            ? error.message
             : "交易資料讀取失敗",
         );
-      }
-
-      setSourceCategories(
-        categoriesResult.status === "fulfilled"
-          ? dedupeCategories(
-              categoriesResult.value.map((category, index) =>
-                normalizeCategory(category, index),
-              ),
-            )
-          : contextCategories.length > 0
-            ? dedupeCategories(contextCategories)
-            : dedupeCategories(fallbackCategories),
-      );
-
-      if (
-        transactionsResult.status === "fulfilled" &&
-        categoriesResult.status === "rejected"
-      ) {
-        setErrorMessage("分類資料讀取失敗");
       }
     });
 
     return () => {
       isMounted = false;
     };
-  }, [contextCategories]);
+  }, []);
 
   const activeCategory = sourceCategories.find(
     (category) => category.name === categoryName && category.type === "expense",

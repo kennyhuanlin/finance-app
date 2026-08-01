@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useEffect, useState } from "react";
+import { Suspense, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useCategories } from "../categories-context";
@@ -246,9 +246,20 @@ function TransactionsContent() {
   const periodParam = searchParams.get("period");
   const actionParam = searchParams.get("action");
   const newTransactionType = searchParams.get("new");
-  const { categories } = useCategories();
-  const expenseCategories = categories.filter((item) => item.type === "expense");
-  const incomeCategories = categories.filter((item) => item.type === "income");
+  const {
+    categories,
+    categoriesReady,
+    categoriesError,
+    isLoadingCategories,
+  } = useCategories();
+  const expenseCategories = useMemo(
+    () => categories.filter((item) => item.type === "expense"),
+    [categories],
+  );
+  const incomeCategories = useMemo(
+    () => categories.filter((item) => item.type === "income"),
+    [categories],
+  );
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [editingTransaction, setEditingTransaction] =
     useState<TransactionForm | null>(null);
@@ -310,6 +321,10 @@ function TransactionsContent() {
     editingTransaction?.type === "收入"
       ? incomeCategories
       : expenseCategories;
+  const selectedEditingCategory = editingTransaction?.type === "transfer"
+    ? undefined
+    : categoryOptions.find((item) => item.name === editingTransaction?.category) ??
+      (categoriesReady ? categoryOptions[0] : undefined);
   const periodFilter = normalizePeriodFilter(periodParam);
   const periodRange = getDateRange(periodFilter);
   const periodRangeStart = periodRange?.start ?? null;
@@ -423,9 +438,11 @@ function TransactionsContent() {
       : preset === "transfer"
         ? "transfer"
         : "支出";
-    const nextCategory = isIncome
-      ? incomeCategories[0]
-      : expenseCategories[0];
+    const nextCategory = preset === "transfer"
+      ? undefined
+      : isIncome
+        ? incomeCategories[0]
+        : expenseCategories[0];
     setMessage("");
     setEditingTransaction({
       id: "",
@@ -466,7 +483,9 @@ function TransactionsContent() {
       if (key === "type") {
         const nextType = String(value);
         const nextCategory =
-          nextType === "收入"
+          nextType === "transfer"
+            ? ""
+            : nextType === "收入"
             ? incomeCategories[0]?.name ?? ""
             : expenseCategories[0]?.name ?? "";
 
@@ -475,7 +494,9 @@ function TransactionsContent() {
           type: nextType,
           category: nextCategory,
           categoryId:
-            nextType === "收入"
+            nextType === "transfer"
+              ? undefined
+              : nextType === "收入"
               ? incomeCategories.find((item) => item.name === nextCategory)?.id
               : expenseCategories.find((item) => item.name === nextCategory)
                   ?.id,
@@ -506,6 +527,8 @@ function TransactionsContent() {
     if (
       !editingTransaction ||
       Number(editingTransaction.amount) <= 0 ||
+      (editingTransaction.type !== "transfer" &&
+        (!categoriesReady || !selectedEditingCategory)) ||
       isSavingTransaction
     ) {
       return;
@@ -517,6 +540,14 @@ function TransactionsContent() {
     const isCreating = editingTransaction.id === "";
     const nextTransaction: Transaction = {
       ...editingTransaction,
+      category:
+        editingTransaction.type === "transfer"
+          ? ""
+          : selectedEditingCategory?.name ?? "",
+      categoryId:
+        editingTransaction.type === "transfer"
+          ? undefined
+          : selectedEditingCategory?.id,
       id: editingTransaction.id || `tx-${Date.now()}`,
       createdAt: editingTransaction.createdAt || new Date().toISOString(),
       note: editingTransaction.note.trim() || editingTransaction.category,
@@ -842,22 +873,39 @@ function TransactionsContent() {
                 </label>
               ) : null}
 
+              {editingTransaction.type !== "transfer" ? (
               <label className="grid gap-2">
                 <span className="text-sm font-medium text-slate-500">分類</span>
                 <select
-                  value={editingTransaction.category}
+                  value={selectedEditingCategory?.name ?? ""}
                   onChange={(event) =>
                     updateEditingTransaction("category", event.target.value)
                   }
+                  disabled={!categoriesReady}
                   className="h-12 rounded-[20px] bg-slate-50 px-4 text-base font-medium outline-none focus:bg-white focus:ring-2 focus:ring-slate-200"
                 >
+                  {!categoriesReady ? (
+                    <option value="">
+                      {categoriesError
+                        ? "分類載入失敗"
+                        : isLoadingCategories
+                          ? "載入分類中..."
+                          : "沒有可用分類"}
+                    </option>
+                  ) : null}
                   {categoryOptions.map((item, index) => (
                     <option key={`${item.id}-${index}`} value={item.name}>
                       {formatCategoryLabel(item)}
                     </option>
                   ))}
                 </select>
+                {categoriesError && !isLoadingCategories ? (
+                  <span className="text-sm font-medium text-rose-600">
+                    分類載入失敗，請稍後再試。
+                  </span>
+                ) : null}
               </label>
+              ) : null}
 
               <label className="grid gap-2">
                 <span className="text-sm font-medium text-slate-500">金額</span>
@@ -900,7 +948,10 @@ function TransactionsContent() {
               </button>
               <button
                 type="submit"
-                disabled={isSavingTransaction}
+                disabled={
+                  isSavingTransaction ||
+                  (editingTransaction.type !== "transfer" && !categoriesReady)
+                }
                 className="h-13 rounded-full bg-slate-950 text-base font-semibold text-white shadow-lg shadow-slate-300/80 disabled:bg-slate-300 disabled:shadow-none"
               >
                 {isSavingTransaction ? "儲存中..." : "儲存"}

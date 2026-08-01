@@ -10,6 +10,7 @@ import {
   type SupportedSheet,
   updateWorksheetRow,
 } from "../../../lib/googleSheetsServer";
+import { normalizeBoolean } from "../../../lib/boolean";
 import {
   refreshCashAccounts,
   refreshInvestmentPositions,
@@ -70,6 +71,19 @@ function requireId(body: Record<string, unknown>) {
   return id;
 }
 
+function normalizeResourceBody(
+  sheet: SupportedSheet,
+  body: Record<string, unknown>,
+) {
+  if (
+    sheet === "recurring_rules" &&
+    Object.prototype.hasOwnProperty.call(body, "enabled")
+  ) {
+    return { ...body, enabled: normalizeBoolean(body.enabled, true) };
+  }
+  return body;
+}
+
 function appsScriptUrl() {
   const url = process.env.GOOGLE_SCRIPT_URL;
   if (!url) {
@@ -108,8 +122,22 @@ async function appsScriptFallback(
           cache: "no-store",
         });
   const text = await response.text();
+  const parsed = (() => {
+    try {
+      return JSON.parse(text) as { error?: string; success?: boolean; message?: string };
+    } catch {
+      return null;
+    }
+  })();
+  const fallbackError = parsed?.error ??
+    (parsed?.success === false ? parsed.message ?? "Apps Script request failed" : "");
+  const status = fallbackError
+    ? fallbackError.toLowerCase().includes("not found")
+      ? 404
+      : 502
+    : response.status;
   return new NextResponse(text, {
-    status: response.status,
+    status,
     headers: { "Content-Type": "application/json" },
   });
 }
@@ -182,7 +210,7 @@ export async function POST(request: NextRequest, context: Context) {
   try {
     const sheet = getSheet(resource);
     sheetName = sheet;
-    const body = await requestBody(request);
+    const body = normalizeResourceBody(sheet, await requestBody(request));
     if (shouldUseAppsScriptFallback()) {
       return appsScriptFallback("POST", sheet, body);
     }
@@ -222,7 +250,7 @@ export async function PUT(request: NextRequest, context: Context) {
   try {
     const sheet = getSheet(resource);
     sheetName = sheet;
-    const body = await requestBody(request);
+    const body = normalizeResourceBody(sheet, await requestBody(request));
     const id = requireId(body);
     recordId = id;
     if (shouldUseAppsScriptFallback()) {

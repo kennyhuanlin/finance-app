@@ -4,12 +4,8 @@ import { Suspense, useEffect, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { useCategories } from "./categories-context";
-import {
-  categories as fallbackCategories,
-  transactions,
-} from "./data";
-import { dedupeCategories } from "./lib/categories";
-import { getCategories, getTransactions } from "./lib/googleSheets";
+import { transactions } from "./data";
+import { getTransactions } from "./lib/googleSheets";
 import {
   formatTransactionDate,
   getTransactionDisplayName,
@@ -210,19 +206,6 @@ function periodToQueryValue(period: Period) {
   }
 
   return "all";
-}
-
-function normalizeCategory(
-  category: Record<string, unknown>,
-  index: number,
-): DashboardCategory {
-  return {
-    id: String(category.id ?? `sheet-category-${index}`),
-    name: String(category.name ?? ""),
-    emoji: String(category.emoji ?? "📦"),
-    type: String(category.type ?? "expense"),
-    color: String(category.color ?? "#64748b"),
-  };
 }
 
 function WalletIcon() {
@@ -439,9 +422,7 @@ export default function Home() {
   const [sourceTransactions, setSourceTransactions] = useState<Transaction[]>(
     [],
   );
-  const [sourceCategories, setSourceCategories] = useState<DashboardCategory[]>(
-    [],
-  );
+  const sourceCategories: DashboardCategory[] = contextCategories;
   const [transactionsLoadState, setTransactionsLoadState] =
     useState<LoadState>("loading");
   const [transactionsErrorMessage, setTransactionsErrorMessage] = useState("");
@@ -452,57 +433,35 @@ export default function Home() {
   useEffect(() => {
     let isMounted = true;
 
-    Promise.allSettled([
-      getTransactions<Record<string, unknown>>(),
-      getCategories<Record<string, unknown>>(),
-    ])
-      .then(([transactionsResult, categoriesResult]) => {
+    getTransactions<Record<string, unknown>>()
+      .then((sheetTransactions) => {
         if (!isMounted) {
           return;
         }
-
-        if (transactionsResult.status === "fulfilled") {
-          setSourceTransactions(
-            transactionsResult.value.map((transaction, index) =>
-              normalizeTransaction(transaction, index),
-            ),
-          );
-          setTransactionsLoadState("success");
-          setTransactionsErrorMessage("");
-        } else {
+        setSourceTransactions(
+          sheetTransactions.map((transaction, index) =>
+            normalizeTransaction(transaction, index),
+          ),
+        );
+        setTransactionsLoadState("success");
+        setTransactionsErrorMessage("");
+      })
+      .catch((error) => {
+        if (isMounted) {
           setSourceTransactions(transactions);
           setTransactionsLoadState("error");
           setTransactionsErrorMessage(
-            transactionsResult.reason instanceof Error
-              ? transactionsResult.reason.message
+            error instanceof Error
+              ? error.message
               : "交易資料讀取失敗",
           );
-        }
-
-        setSourceCategories(
-          categoriesResult.status === "fulfilled"
-            ? dedupeCategories(
-                categoriesResult.value.map((category, index) =>
-                  normalizeCategory(category, index),
-                ),
-              )
-            : contextCategories.length > 0
-              ? dedupeCategories(contextCategories)
-              : dedupeCategories(fallbackCategories),
-        );
-
-        if (
-          transactionsResult.status === "fulfilled" &&
-          categoriesResult.status === "rejected"
-        ) {
-          setTransactionsErrorMessage("分類資料讀取失敗");
         }
       });
 
     return () => {
       isMounted = false;
     };
-  }, [contextCategories]);
+  }, []);
 
   const activePeriodTitle = formatPeriodTitle(activePeriod);
   const isCumulative = activePeriod === "累積餘額";

@@ -91,7 +91,8 @@ function doPost(event) {
 
     if (action === "update") {
       updateRow(sheet, table.headers, index + 2, payload);
-      return jsonOutput({ ok: true, id: payload.id });
+      const updated = Object.assign({}, table.rows[index], payload, { id: payload.id });
+      return jsonOutput({ ok: true, id: payload.id, data: updated });
     }
     if (action === "delete") {
       sheet.deleteRow(index + 2);

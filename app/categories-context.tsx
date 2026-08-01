@@ -33,6 +33,9 @@ export type Category = {
 type CategoriesContextValue = {
   categories: Category[];
   isLoadingCategories: boolean;
+  categoriesReady: boolean;
+  categoriesError: string;
+  ensureCategories: (timeoutMs?: number) => Promise<Category[]>;
   refreshCategories: () => Promise<void>;
   addCategory: (category: Omit<Category, "id">) => Promise<void>;
   updateCategory: (category: Category) => Promise<void>;
@@ -40,6 +43,11 @@ type CategoriesContextValue = {
 };
 
 const CategoriesContext = createContext<CategoriesContextValue | null>(null);
+const CATEGORY_CACHE_KEY = "finance-categories-v1";
+const CATEGORY_CACHE_TTL = 5 * 60 * 1000;
+type CategoryCache = { categories: Category[]; timestamp: number };
+let memoryCache: CategoryCache | undefined;
+let pendingCategories: Promise<Category[]> | undefined;
 
 function normalizeCategory(
   category: Record<string, unknown>,
@@ -56,44 +64,131 @@ function normalizeCategory(
   };
 }
 
+function readCategoryCache() {
+  if (memoryCache && Date.now() - memoryCache.timestamp < CATEGORY_CACHE_TTL) {
+    console.info("categories loaded", { source: "memory" });
+    return memoryCache.categories;
+  }
+  memoryCache = undefined;
+  if (typeof window === "undefined") return null;
+  const stored = sessionStorage.getItem(CATEGORY_CACHE_KEY);
+  if (!stored) return null;
+  try {
+    const parsed = JSON.parse(stored) as CategoryCache;
+    if (parsed && Date.now() - parsed.timestamp < CATEGORY_CACHE_TTL) {
+      memoryCache = parsed;
+      console.info("categories loaded", { source: "sessionStorage" });
+      return parsed.categories;
+    }
+  } catch {
+    // Invalid browser cache is ignored and replaced by the network response.
+  }
+  sessionStorage.removeItem(CATEGORY_CACHE_KEY);
+  return null;
+}
+
+function loadCategoriesFromNetwork() {
+  if (pendingCategories) return pendingCategories;
+  pendingCategories = getCategories<Record<string, unknown>>()
+    .then((sheetCategories) =>
+      dedupeCategories(
+        sheetCategories.map((category, index) =>
+          normalizeCategory(category, index),
+        ),
+      ),
+    )
+    .then((categories) => {
+      memoryCache = { categories, timestamp: Date.now() };
+      if (typeof window !== "undefined") {
+        try {
+          sessionStorage.setItem(CATEGORY_CACHE_KEY, JSON.stringify(memoryCache));
+        } catch {
+          // The memory cache remains available when browser storage is blocked.
+        }
+      }
+      console.info("categories loaded", { source: "network" });
+      return categories;
+    })
+    .finally(() => {
+      pendingCategories = undefined;
+    });
+  return pendingCategories;
+}
+
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number) {
+  const signal = AbortSignal.timeout(timeoutMs);
+  return Promise.race([
+    promise,
+    new Promise<T>((_, reject) => {
+      signal.addEventListener("abort", () => reject(new Error("分類資料載入逾時")), {
+        once: true,
+      });
+    }),
+  ]);
+}
+
 export function CategoriesProvider({ children }: { children: ReactNode }) {
-  const [categories, setCategories] = useState<Category[]>([]);
-  const [isLoadingCategories, setIsLoadingCategories] = useState(true);
+  const [categories, setCategories] = useState<Category[]>(() =>
+    readCategoryCache() ?? [],
+  );
+  const [isLoadingCategories, setIsLoadingCategories] = useState(
+    () => !memoryCache,
+  );
+  const [categoriesError, setCategoriesError] = useState("");
 
   const refreshCategories = useCallback(async () => {
-    await Promise.resolve();
-    setIsLoadingCategories(true);
-
     try {
-      const sheetCategories = await getCategories<Record<string, unknown>>();
-      setCategories(
-        dedupeCategories(
-          sheetCategories.map((category, index) =>
-            normalizeCategory(category, index),
-          ),
-        ),
+      setCategories(await loadCategoriesFromNetwork());
+      setCategoriesError("");
+    } catch (error) {
+      setCategoriesError(
+        error instanceof Error ? error.message : "分類載入失敗",
       );
-    } catch {
-      setCategories([]);
+      if (!memoryCache) setCategories([]);
     } finally {
       setIsLoadingCategories(false);
     }
   }, []);
 
   useEffect(() => {
-    const timeoutId = window.setTimeout(() => {
-      void refreshCategories();
-    }, 0);
-
+    let isMounted = true;
+    loadCategoriesFromNetwork()
+      .then((loaded) => {
+        if (!isMounted) return;
+        setCategories(loaded);
+        setCategoriesError("");
+      })
+      .catch((error) => {
+        if (!isMounted) return;
+        setCategoriesError(
+          error instanceof Error ? error.message : "分類載入失敗",
+        );
+      })
+      .finally(() => {
+        if (isMounted) setIsLoadingCategories(false);
+      });
     return () => {
-      window.clearTimeout(timeoutId);
+      isMounted = false;
     };
   }, [refreshCategories]);
+
+  const ensureCategories = useCallback(async (timeoutMs = 2000) => {
+    const cached = readCategoryCache();
+    if (cached?.length) return cached;
+    const loaded = await withTimeout(loadCategoriesFromNetwork(), timeoutMs);
+    setCategories(loaded);
+    setCategoriesError("");
+    setIsLoadingCategories(false);
+    return loaded;
+  }, []);
 
   const value = useMemo<CategoriesContextValue>(
     () => ({
       categories,
       isLoadingCategories,
+      categoriesReady: !isLoadingCategories && categories.length > 0,
+      categoriesError,
+      ensureCategories,
       refreshCategories,
       addCategory: async (category) => {
         const nextCategory = {
@@ -134,7 +229,13 @@ export function CategoriesProvider({ children }: { children: ReactNode }) {
         await refreshCategories();
       },
     }),
-    [categories, isLoadingCategories, refreshCategories],
+    [
+      categories,
+      categoriesError,
+      ensureCategories,
+      isLoadingCategories,
+      refreshCategories,
+    ],
   );
 
   return (
