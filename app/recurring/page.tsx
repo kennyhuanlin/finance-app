@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import { ChevronDown, ChevronUp, Pencil, Trash2 } from "lucide-react";
 import { useCategories } from "../categories-context";
 import { formatCategoryLabel } from "../lib/categories";
 import { normalizeBoolean } from "../lib/boolean";
@@ -437,6 +438,18 @@ export default function RecurringPage() {
   const [isSaving, setIsSaving] = useState(false);
   const [deletingRuleId, setDeletingRuleId] = useState<string | null>(null);
   const [updatingRuleId, setUpdatingRuleId] = useState<string | null>(null);
+  const [expandedRuleIds, setExpandedRuleIds] = useState<Set<string>>(
+    () => new Set(),
+  );
+
+  function toggleRuleDetails(id: string) {
+    setExpandedRuleIds((current) => {
+      const next = new Set(current);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
 
   async function loadRules() {
     const sheetRules = await getRecurringRules<Record<string, unknown>>();
@@ -905,124 +918,162 @@ export default function RecurringPage() {
                 categories.find((category) => category.id === rule.categoryId)
                   ?.name ?? rule.category;
               const ruleIsIncome = isIncomeRule(rule);
+              const isExpanded = expandedRuleIds.has(rule.id);
 
               return (
-              <article
-                key={rule.id}
-                className="rounded-[26px] bg-slate-50/80 p-4"
-              >
-                <div className="flex items-start justify-between gap-4">
+                <article
+                  key={rule.id}
+                  className="w-full min-w-0 space-y-5 overflow-hidden rounded-[28px] bg-slate-50/80 p-5 shadow-sm shadow-slate-200/50 sm:p-6"
+                >
                   <div className="min-w-0">
-                    <div className="flex items-center gap-2">
-                      <p className="truncate text-base font-semibold text-slate-950">
+                    <div className="flex items-start justify-between gap-3">
+                      <h3 className="min-w-0 break-words text-xl font-bold text-slate-950 sm:text-2xl">
                         {rule.name}
-                      </p>
+                      </h3>
                       <span
-                        className={`rounded-full px-2 py-0.5 text-xs font-medium ${
+                        className={`shrink-0 rounded-full px-3 py-1 text-xs font-semibold ${
                           rule.status === "active"
                             ? "bg-emerald-50 text-emerald-700"
-                            : "bg-slate-200 text-slate-500"
+                            : "bg-slate-200 text-slate-600"
                         }`}
                       >
                         {rule.status === "active" ? "啟用" : "已暫停"}
                       </span>
                     </div>
-                    <p className="mt-1 text-sm font-medium text-slate-400">
-                      {ruleIsIncome
-                        ? categoryName
-                        : `${categoryName} · ${rule.nature} · ${rule.necessity}`}
-                    </p>
-                    <p className="mt-1 text-xs font-medium text-slate-400">
-                      開始 {formatDate(rule.startDate)}
-                    </p>
+                    {isExpanded ? (
+                      <p className="mt-2 break-words text-sm font-medium text-slate-500">
+                        {ruleIsIncome
+                          ? categoryName
+                          : `${categoryName} · ${rule.necessity}`}
+                      </p>
+                    ) : null}
                   </div>
-                  <div className="shrink-0 text-right">
-                    <p
-                      className={`text-base font-semibold ${
-                        ruleIsIncome ? "text-emerald-600" : "text-rose-600"
-                      }`}
-                    >
-                      原始金額 {formatMoney(rule.amount)} /{" "}
-                      {formatFrequencyUnit(rule.frequency)}
-                    </p>
-                    <p className="mt-1 text-xs font-medium text-slate-400">
-                      {formatFrequency(rule.frequency)}
-                    </p>
-                    <p className="mt-1 text-xs font-medium text-slate-500">
-                      月化金額 {formatMoney(getMonthlyAmount(rule))}
-                    </p>
-                  </div>
-                </div>
 
-                <div className="mt-4 flex items-center justify-between gap-4">
-                  <div className="grid gap-3 sm:grid-cols-3">
-                    <div>
-                      <p className="text-xs font-medium text-slate-400">
-                        下次執行日
-                      </p>
-                      <p className="mt-1 text-sm font-semibold text-slate-700">
-                        {formatDate(rule.nextRunDate)}
-                      </p>
-                    </div>
-                    <div>
-                      <p className="text-xs font-medium text-slate-400">
-                        結束日期
-                      </p>
-                      <p className="mt-1 text-sm font-semibold text-slate-700">
-                        {formatDate(rule.endDate)}
-                      </p>
-                    </div>
-                    <div>
-                      <p className="text-xs font-medium text-slate-400">
-                        剩餘期數
-                      </p>
-                      <p className="mt-1 text-sm font-semibold text-slate-700">
-                        {rule.remainingCount || "未設定"}
-                      </p>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <button
-                      type="button"
-                      onClick={() => openEditForm(rule)}
-                      className="rounded-full bg-white px-3 py-1.5 text-sm font-medium text-slate-700 shadow-sm shadow-slate-200 transition active:scale-[0.98]"
-                    >
-                      編輯
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => deleteRule(rule)}
-                      disabled={deletingRuleId !== null}
-                      className="rounded-full bg-rose-50 px-3 py-1.5 text-sm font-medium text-rose-600 transition active:scale-[0.98] disabled:bg-slate-100 disabled:text-slate-400"
-                    >
-                      {deletingRuleId === rule.id ? "刪除中..." : "刪除"}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => toggleRule(rule)}
-                      disabled={updatingRuleId !== null}
-                      className={`relative h-8 w-14 rounded-full p-1 transition ${
-                        rule.status === "active" ? "bg-emerald-500" : "bg-slate-300"
-                      } disabled:cursor-not-allowed disabled:opacity-60`}
-                      aria-pressed={rule.status === "active"}
-                      aria-label={`${rule.name}${rule.status === "active" ? "暫停" : "啟用"}`}
-                    >
-                      <span
-                        className={`block h-6 w-6 rounded-full bg-white shadow-sm transition ${
-                          rule.status === "active" ? "translate-x-6" : "translate-x-0"
+                  <div className="grid min-w-0 grid-cols-2 gap-4 rounded-2xl bg-white/75 p-4">
+                    <div className="min-w-0">
+                      <p className="text-sm font-medium text-slate-500">月化金額</p>
+                      <p
+                        className={`mt-1 break-words text-2xl font-bold ${
+                          ruleIsIncome ? "text-emerald-600" : "text-slate-950"
                         }`}
-                      />
-                    </button>
-                    <span className="min-w-14 text-xs font-semibold text-slate-500">
-                      {updatingRuleId === rule.id
-                        ? "處理中..."
-                        : rule.enabled
-                          ? "暫停"
-                          : "恢復"}
-                    </span>
+                      >
+                        {formatMoney(getMonthlyAmount(rule))}
+                      </p>
+                    </div>
+                    <div className="min-w-0 text-right">
+                      <p className="text-sm font-medium text-slate-500">原始金額</p>
+                      <p
+                        className={`mt-1 break-words text-lg font-semibold ${
+                          ruleIsIncome ? "text-emerald-600" : "text-rose-600"
+                        }`}
+                      >
+                        {formatMoney(rule.amount)} / {formatFrequencyUnit(rule.frequency)}
+                      </p>
+                      <p className="mt-1 text-xs font-medium text-slate-400">
+                        {formatFrequency(rule.frequency)}
+                      </p>
+                    </div>
                   </div>
-                </div>
-              </article>
+
+                  <div className="space-y-3">
+                    {(isExpanded
+                      ? [
+                          ["開始日期", formatDate(rule.startDate)],
+                          ["下次執行", formatDate(rule.nextRunDate)],
+                          ["結束日期", formatDate(rule.endDate)],
+                          ["剩餘期數", rule.remainingCount || "無限制"],
+                        ]
+                      : [["下次執行", formatDate(rule.nextRunDate)]]
+                    ).map(([label, value]) => (
+                      <div
+                        key={label}
+                        className="flex min-w-0 items-start justify-between gap-4"
+                      >
+                        <span className="shrink-0 text-sm font-medium text-slate-500">
+                          {label}
+                        </span>
+                        <span className="min-w-0 break-words text-right text-sm font-semibold text-slate-700">
+                          {value}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+
+                  <div className="flex min-w-0 items-center justify-between gap-4 border-t border-slate-200/80 pt-4">
+                    <span className="shrink-0 text-sm font-semibold text-slate-700">
+                      啟用規則
+                    </span>
+                    <div className="flex min-w-0 items-center justify-end gap-2">
+                      <button
+                        type="button"
+                        onClick={() => toggleRule(rule)}
+                        disabled={updatingRuleId !== null}
+                        className="flex min-h-11 shrink-0 items-center rounded-full focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-60"
+                        aria-pressed={rule.status === "active"}
+                        aria-label={`${rule.name}${rule.status === "active" ? "暫停" : "啟用"}`}
+                      >
+                        <span
+                          className={`relative block h-8 w-14 rounded-full p-1 transition ${
+                            rule.status === "active"
+                              ? "bg-emerald-500"
+                              : "bg-slate-300"
+                          }`}
+                        >
+                          <span
+                            className={`block h-6 w-6 rounded-full bg-white shadow-sm transition ${
+                              rule.status === "active"
+                                ? "translate-x-6"
+                                : "translate-x-0"
+                            }`}
+                          />
+                        </span>
+                      </button>
+                      <span className="w-16 shrink-0 text-right text-xs font-semibold text-slate-500">
+                        {updatingRuleId === rule.id
+                          ? "處理中..."
+                          : rule.enabled
+                            ? "啟用"
+                            : "已暫停"}
+                      </span>
+                    </div>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => toggleRuleDetails(rule.id)}
+                    className="flex min-h-11 w-full items-center justify-center gap-2 rounded-2xl text-sm font-semibold text-slate-600 transition hover:bg-white focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-400 active:scale-[0.99]"
+                    aria-expanded={isExpanded}
+                  >
+                    {isExpanded ? "收合詳情" : "查看詳情"}
+                    {isExpanded ? (
+                      <ChevronUp size={18} aria-hidden="true" />
+                    ) : (
+                      <ChevronDown size={18} aria-hidden="true" />
+                    )}
+                  </button>
+
+                  {isExpanded ? (
+                    <div className="grid grid-cols-2 gap-3">
+                      <button
+                        type="button"
+                        onClick={() => openEditForm(rule)}
+                        className="flex min-h-[48px] w-full items-center justify-center gap-2 whitespace-nowrap rounded-2xl bg-slate-200/80 px-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-400 active:scale-[0.98]"
+                      >
+                        <Pencil size={17} aria-hidden="true" />
+                        編輯
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => deleteRule(rule)}
+                        disabled={deletingRuleId !== null}
+                        className="flex min-h-[48px] w-full items-center justify-center gap-2 whitespace-nowrap rounded-2xl bg-rose-50 px-3 text-sm font-semibold text-rose-600 transition hover:bg-rose-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-rose-400 active:scale-[0.98] disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400"
+                      >
+                        <Trash2 size={17} aria-hidden="true" />
+                        {deletingRuleId === rule.id ? "刪除中..." : "刪除"}
+                      </button>
+                    </div>
+                  ) : null}
+                </article>
               );
             })}
           </div>
