@@ -1,3 +1,4 @@
+import { requireFinanceAccess } from "../../../../lib/apiAccess";
 import { NextResponse } from "next/server";
 import {
   GoogleSheetsApiError,
@@ -10,7 +11,9 @@ import {
 
 let investmentSyncRunning = false;
 
-export async function POST() {
+export async function POST(request: Request) {
+  const denied = requireFinanceAccess(request);
+  if (denied) return denied;
   if (investmentSyncRunning) {
     return NextResponse.json(
       {
