@@ -4,6 +4,12 @@ const RECURRING_RULES_SHEET = "recurring_rules";
 const TRANSACTIONS_SHEET = "transactions";
 
 function recurringTransactions() {
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(1000)) throw new Error("Recurring transaction run already in progress");
+  try { runRecurringTransactions(); } finally { lock.releaseLock(); }
+}
+
+function runRecurringTransactions() {
   const spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
   const rulesSheet = spreadsheet.getSheetByName(RECURRING_RULES_SHEET);
   const transactionsSheet = spreadsheet.getSheetByName(TRANSACTIONS_SHEET);
@@ -15,14 +21,24 @@ function recurringTransactions() {
   const todayKey = toDateKey(new Date());
   const ruleTable = readTable(rulesSheet);
   const transactionTable = readTable(transactionsSheet);
+  for (const key of ["id", "date", "sourceType", "recurringId"]) {
+    if (!transactionTable.headers.includes(key)) throw new Error("Missing transaction header: " + key);
+  }
+  for (const key of ["id", "nextRunDate", "lastRunDate", "enabled", "remainingCount"]) {
+    if (!ruleTable.headers.includes(key)) throw new Error("Missing recurring header: " + key);
+  }
   const existingRecurringTransactions = buildRecurringTransactionSet(
     transactionTable.rows,
   );
 
   ruleTable.rows.forEach((rule, index) => {
     const rowNumber = index + 2;
+    if (!String(rule.id || "").trim() || !Number.isFinite(Number(rule.amount)) || Number(rule.amount) <= 0) return;
+    if (!["daily", "weekly", "monthly", "quarterly", "yearly"].includes(String(rule.frequency))) return;
+    const count = getRemainingCount(rule.remainingCount);
+    if (count !== null && (!Number.isSafeInteger(count) || count < 0)) return;
 
-    if (!isEnabled(rule.enabled)) {
+    if (!isEnabled(rule.enabled === undefined || rule.enabled === "" ? rule.isActive : rule.enabled)) {
       return;
     }
 
@@ -30,7 +46,7 @@ function recurringTransactions() {
       return;
     }
 
-    const nextRunDate = toDateKey(rule.nextRunDate);
+    const nextRunDate = toDateKey(rule.nextRunDate || rule.nextDate);
 
     if (!nextRunDate || nextRunDate > todayKey) {
       return;
@@ -39,6 +55,7 @@ function recurringTransactions() {
     const endDate = toDateKey(rule.endDate);
 
     if (endDate && endDate < todayKey) {
+      updateRow(rulesSheet, ruleTable.headers, rowNumber, { enabled: false });
       return;
     }
 
@@ -69,7 +86,7 @@ function recurringTransactions() {
 
     updateRow(rulesSheet, ruleTable.headers, rowNumber, {
       lastRunDate: nextRunDate,
-      nextRunDate: addPeriod(nextRunDate, String(rule.frequency || "monthly")),
+      nextRunDate: addPeriod(nextRunDate, String(rule.frequency || "monthly"), toDateKey(rule.startDate) || nextRunDate),
       remainingCount:
         nextRemainingCount === null ? "" : String(nextRemainingCount),
       enabled: nextEnabled,
@@ -111,11 +128,13 @@ function appendTransaction(sheet, headers, rule, dateKey) {
 }
 
 function updateRow(sheet, headers, rowNumber, patch) {
-  headers.forEach((header, index) => {
-    if (Object.prototype.hasOwnProperty.call(patch, header)) {
-      sheet.getRange(rowNumber, index + 1).setValue(patch[header]);
-    }
-  });
+  // One row write avoids a half-updated lastRunDate/count after an interrupted run.
+  const range = sheet.getRange(rowNumber, 1, 1, headers.length);
+  const values = range.getValues()[0];
+  const formulas = range.getFormulas()[0];
+  const next = headers.map((header, index) =>
+    Object.prototype.hasOwnProperty.call(patch, header) ? patch[header] : formulas[index] || values[index]);
+  range.setValues([next]);
 }
 
 function toRow(headers, record) {
@@ -152,7 +171,7 @@ function getNextRemainingCount(value) {
 function getRemainingCount(value) {
   if (value === "" || value === null || value === undefined) return null;
   const count = Number(value);
-  return Number.isFinite(count) ? count : null;
+  return count;
 }
 
 function isEnabled(value) {
@@ -176,7 +195,9 @@ function toDateKey(value) {
   const dateOnlyMatch = String(value).match(/^(\d{4})-(\d{2})-(\d{2})$/);
 
   if (dateOnlyMatch) {
-    return dateOnlyMatch[0];
+    const [year, month, day] = dateOnlyMatch[0].split("-").map(Number);
+    const date = new Date(year, month - 1, day);
+    return date.getFullYear() === year && date.getMonth() === month - 1 && date.getDate() === day ? dateOnlyMatch[0] : "";
   }
 
   const date = new Date(value);
@@ -196,19 +217,19 @@ function formatDateKey(date) {
   return `${year}-${month}-${day}`;
 }
 
-function addPeriod(dateKey, frequency) {
+function addPeriod(dateKey, frequency, anchor) {
   const [year, month, day] = dateKey.split("-").map(Number);
   const date = new Date(year, month - 1, day);
-
-  if (frequency === "daily") {
-    date.setDate(date.getDate() + 1);
-  } else if (frequency === "weekly") {
-    date.setDate(date.getDate() + 7);
-  } else if (frequency === "yearly") {
-    date.setFullYear(date.getFullYear() + 1);
+  if (frequency === "daily" || frequency === "weekly") {
+    date.setDate(day + (frequency === "daily" ? 1 : 7));
   } else {
-    date.setMonth(date.getMonth() + 1);
+    const months = { monthly: 1, quarterly: 3, yearly: 12 }[frequency];
+    if (!months) throw new Error("Unsupported recurring frequency");
+    const anchorDay = Number(String(anchor || dateKey).slice(-2));
+    date.setDate(1);
+    date.setMonth(date.getMonth() + months);
+    const lastDay = new Date(date.getFullYear(), date.getMonth() + 1, 0).getDate();
+    date.setDate(Math.min(anchorDay, lastDay));
   }
-
   return formatDateKey(date);
 }
