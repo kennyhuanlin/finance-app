@@ -24,6 +24,9 @@ jobs:
           node-version: '24'
       - name: Install patched dependency candidate without lifecycle scripts
         run: npm install --ignore-scripts --no-fund --no-audit --save-exact next@16.3.6 eslint-config-next@16.3.6
+      - name: Emit dependency delta for offline readback
+        run: |
+          node -e 'const fs=require("node:fs"),cp=require("node:child_process");const old=JSON.parse(cp.execFileSync("git",["show","HEAD:package-lock.json"]));const next=JSON.parse(fs.readFileSync("package-lock.json"));const changed=Object.fromEntries(Object.entries(next.packages).filter(([k,v])=>JSON.stringify(v)!==JSON.stringify(old.packages[k])));const removed=Object.keys(old.packages).filter(k=>!(k in next.packages));console.log("FINANCE_DEPENDENCY_DELTA="+JSON.stringify({packageJson:JSON.parse(fs.readFileSync("package.json")),changed,removed}));'
       - name: Save reviewed dependency candidate
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
