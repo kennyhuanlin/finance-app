@@ -126,3 +126,10 @@ test('scheduler row state update preserves existing formulas',()=>{
  f.context.SpreadsheetApp.getActiveSpreadsheet=()=>({getSheetByName:name=>{const sheet=get(name);const range=sheet.getRange;sheet.getRange=(...args)=>{const value=range(...args);value.getFormulas=()=>{const formulas=Array(args[3]).fill('');formulas[3]='="Fixture category"';return [formulas]};return value};return sheet}});
  f.context.recurringTransactions();assert.equal(f.rule().category,'="Fixture category"');
 });
+test('explicit public origin accepts internal route URLs without allowing another origin',()=>{
+ process.env.FINANCE_APP_ORIGIN='https://fixture.invalid';
+ const req=new Request('https://internal.invalid/api/google/recurring',{method:'POST',headers:{authorization,origin:'https://fixture.invalid','content-type':'application/json'},body:'{}'});
+ assert.equal(requireFinanceAccess(req),null);
+ assert.equal(requireFinanceAccess(request('', 'POST', {}, {origin:'https://attacker.invalid'})).status,403);
+ delete process.env.FINANCE_APP_ORIGIN;
+});
