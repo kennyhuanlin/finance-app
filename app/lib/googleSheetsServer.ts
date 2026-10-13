@@ -314,7 +314,6 @@ export async function ensureWorksheetExists(sheet: SupportedSheet) {
 }
 
 async function getValues(sheet: SupportedSheet) {
-  await ensureWorksheetExists(sheet);
   const { spreadsheetId } = getConfig();
   const range = encodeURIComponent(`${sheet}!A:Z`);
   const result = await googleRequest<{ values?: unknown[][] }>(
@@ -456,7 +455,6 @@ export async function readWorksheetsCachedWithRetry(
   const batchRequest =
     existing ??
     (async () => {
-      await Promise.all(missing.map(ensureWorksheetExists));
       const { spreadsheetId } = getConfig();
       const params = new URLSearchParams();
       missing.forEach((sheet) => params.append("ranges", `${sheet}!A:Z`));
