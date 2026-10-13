@@ -205,7 +205,7 @@ export async function POST(request: NextRequest, context: Context) {
     sheetName = sheet;
     const body = normalizeResourceBody(sheet, await requestBody(request));
     if (sheet === "recurring_rules") {
-      const message = validateRecurringRule(body, request.method === "PUT");
+      const message = validateRecurringRule(body);
       if (message) throw new ApiError(message, 400);
     }
     if (shouldUseAppsScriptFallback()) {
@@ -251,7 +251,9 @@ export async function PUT(request: NextRequest, context: Context) {
     sheetName = sheet;
     const body = normalizeResourceBody(sheet, await requestBody(request));
     if (sheet === "recurring_rules") {
-      const message = validateRecurringRule(body, request.method === "PUT");
+      // Legacy rules have no start date. Empty updates must neither backfill nor erase it.
+      if (!String(body.startDate ?? "").trim()) delete body.startDate;
+      const message = validateRecurringRule(body, true);
       if (message) throw new ApiError(message, 400);
     }
     const id = requireId(body);
