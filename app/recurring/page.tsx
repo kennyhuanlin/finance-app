@@ -572,7 +572,8 @@ export default function RecurringPage() {
 
       if (
         (key === "startDate" || key === "frequency") &&
-        !current.manualNextRunDate
+        !current.manualNextRunDate &&
+        (key === "startDate" ? Boolean(value) : Boolean(current.startDate))
       ) {
         next.nextRunDate = addPeriod(
           key === "startDate" ? String(value) : current.startDate,
@@ -651,7 +652,8 @@ export default function RecurringPage() {
     event.preventDefault();
 
     if (!editingRule || saveInFlight.current) return;
-    const validation = validateRecurringRule(editingRule);
+    const previousRule = rules.find((rule) => rule.id === editingRule.id);
+    const validation = validateRecurringRule(editingRule, false, Boolean(previousRule && !previousRule.startDate));
     if (validation) { setFormMessage(validation); return; }
     if (isLoadingCategories || categoriesError) {
       setFormMessage("分類尚未載入完成，請稍後再試或重新整理"); return;
