@@ -15,6 +15,16 @@ async function main() {
   page=await context.newPage();
   page.on("response",async response=>{if(response.url().includes("/api/")) console.log("FIXTURE_RESPONSE",response.status(),await response.text().catch(()=>""));});
   await page.goto('http://127.0.0.1:45817/recurring');
+  await page.getByText('歷史固定支出',{exact:true}).waitFor();
+  await page.getByRole('button',{name:'查看詳情',exact:true}).first().click();
+  await page.getByRole('button',{name:'編輯',exact:true}).first().click();
+  const legacyForm=page.getByRole('dialog',{name:'固定收支表單'});
+  assert.equal(await legacyForm.getByLabel('開始日期',{exact:true}).inputValue(),'');
+  await legacyForm.getByLabel('名稱',{exact:true}).fill('歷史固定支出已編輯');
+  await legacyForm.getByRole('combobox',{name:/週期/}).selectOption('quarterly');
+  assert.equal(await legacyForm.getByLabel('下次執行日',{exact:true}).inputValue(),'2026-01-31');
+  await legacyForm.getByRole('button',{name:'儲存',exact:true}).click();await legacyForm.waitFor({state:'hidden'});
+  await page.getByText('歷史固定支出已編輯',{exact:true}).waitFor();
   await page.getByRole('button',{name:'新增固定支出',exact:true}).first().click();
   const form=page.getByRole('dialog',{name:'固定收支表單'});
   await form.waitFor();
@@ -42,7 +52,7 @@ async function main() {
   await form.getByRole('button',{name:'儲存',exact:true}).click();await form.waitFor({state:'hidden'});
   await page.getByRole('button',{name:'固定收入',exact:true}).click();await page.getByText('隔離固定收入',{exact:true}).waitFor();
   const anonymous=await browser.newContext();const denied=await anonymous.request.get('http://127.0.0.1:45817/api/google/recurring');assert.equal(denied.status(),401);await anonymous.close();
-  console.log('Browser PASS: delayed categories, visible validation, server error preserves input, expense/income create, quarter/month end, anonymous API denied.');
+  console.log('Browser PASS: legacy edit without start-date backfill, frequency change preserves next date, delayed categories, visible validation, server error preserves input, expense/income create, quarter/month end, anonymous API denied.');
  } catch(error) {
   if(page) console.error("FIXTURE_DOM",await page.locator("body").innerText());
   console.error("FIXTURE_SERVER_LOG",log);throw error;
