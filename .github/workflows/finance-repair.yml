@@ -1,7 +1,5 @@
 name: Finance repair isolation
 on:
-  push:
-    branches: [fix/recurring-and-confirmed-defects-20261014]
   pull_request:
     branches: [main]
 permissions:
