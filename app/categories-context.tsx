@@ -71,7 +71,8 @@ function readCategoryCache() {
   }
   memoryCache = undefined;
   if (typeof window === "undefined") return null;
-  const stored = sessionStorage.getItem(CATEGORY_CACHE_KEY);
+  let stored;
+  try { stored = sessionStorage.getItem(CATEGORY_CACHE_KEY); } catch { return null; }
   if (!stored) return null;
   try {
     const parsed = JSON.parse(stored) as CategoryCache;
@@ -83,7 +84,7 @@ function readCategoryCache() {
   } catch {
     // Invalid browser cache is ignored and replaced by the network response.
   }
-  sessionStorage.removeItem(CATEGORY_CACHE_KEY);
+  try { sessionStorage.removeItem(CATEGORY_CACHE_KEY); } catch { /* Storage may be blocked. */ }
   return null;
 }
 
