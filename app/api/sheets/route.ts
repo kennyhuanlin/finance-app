@@ -1,69 +1,24 @@
 import { NextRequest, NextResponse } from "next/server";
-
-function getGoogleScriptUrl() {
-  const url = process.env.GOOGLE_SCRIPT_URL;
-
-  if (!url) {
-    throw new Error("GOOGLE_SCRIPT_URL is not configured");
-  }
-
-  return url;
-}
-
-function proxyResponse(body: string, status: number) {
-  return new NextResponse(body, {
-    status,
-    headers: {
-      "Content-Type": "application/json",
-    },
-  });
-}
-
+import { requireFinanceAccess } from "../../lib/apiAccess";
+import * as canonical from "../google/[resource]/route";
+const resources: Record<string, string> = {
+  transactions: "transactions", categories: "categories", recurring_rules: "recurring",
+  investment_trades: "investment-trades", investment_positions: "investment-positions",
+  fx_records: "fx-records", dividend_records: "dividend-records", cash_accounts: "cash-accounts", cash_ledger: "cash-ledger",
+};
 export async function GET(request: NextRequest) {
-  try {
-    const sheet = request.nextUrl.searchParams.get("sheet");
-
-    if (!sheet) {
-      return NextResponse.json(
-        { error: "Missing sheet parameter" },
-        { status: 400 },
-      );
-    }
-
-    const url = getGoogleScriptUrl();
-    const response = await fetch(`${url}?sheet=${encodeURIComponent(sheet)}`, {
-      method: "GET",
-      cache: "no-store",
-    });
-    const body = await response.text();
-
-    return proxyResponse(body, response.status);
-  } catch (error) {
-    return NextResponse.json(
-      { error: error instanceof Error ? error.message : "Failed to fetch sheet" },
-      { status: 500 },
-    );
-  }
+  const denied = requireFinanceAccess(request); if (denied) return denied;
+  const sheet = request.nextUrl.searchParams.get("sheet") ?? "";
+  if (!Object.hasOwn(resources, sheet)) return NextResponse.json({ error: "Unsupported sheet" }, { status: 400 });
+  return canonical.GET(request, { params: Promise.resolve({ resource: resources[sheet] }) });
 }
-
 export async function POST(request: NextRequest) {
-  try {
-    const url = getGoogleScriptUrl();
-    const body = await request.json();
-    const response = await fetch(url, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(body),
-    });
-    const responseBody = await response.text();
-
-    return proxyResponse(responseBody, response.status);
-  } catch (error) {
-    return NextResponse.json(
-      { error: error instanceof Error ? error.message : "Failed to mutate sheet" },
-      { status: 500 },
-    );
-  }
+  const denied = requireFinanceAccess(request); if (denied) return denied;
+  let body; try { body = await request.json(); } catch { return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 }); }
+  if (!body || !Object.hasOwn(resources, String(body.sheet))) return NextResponse.json({ error: "Unsupported sheet" }, { status: 400 });
+  const action = body.action ?? "create";
+  const method = action === "create" ? "POST" : action === "update" ? "PUT" : action === "delete" ? "DELETE" : "";
+  if (!method) return NextResponse.json({ error: "Unsupported action" }, { status: 400 });
+  const forwarded = new NextRequest(request.url, { method, headers: request.headers, body: JSON.stringify(body) });
+  return canonical[method](forwarded, { params: Promise.resolve({ resource: resources[body.sheet] }) });
 }
