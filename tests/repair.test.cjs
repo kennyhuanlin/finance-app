@@ -115,3 +115,14 @@ test('scheduler duplicate suppression, anchored month end and remaining periods'
 test('scheduler quarterly and exhaustion',()=>{const f=scriptFixture({frequency:'quarterly',remainingCount:'1'});f.context.recurringTransactions();assert.equal(f.rule().nextRunDate,'2026-04-30');assert.equal(f.rule().enabled,false);});
 for(const patch of [{enabled:false},{remainingCount:'0'},{remainingCount:'broken'},{amount:0},{nextRunDate:'2026-02-30'}]) test(`scheduler skips invalid/inactive ${JSON.stringify(patch)}`,()=>{const f=scriptFixture(patch);f.context.recurringTransactions();assert.equal(f.rows.transactions.length,1);assert.equal(f.writes(),0)});
 test('scheduler concurrent run fails before sheet access',()=>{const f=scriptFixture();f.context.LockService.getScriptLock=()=>({tryLock:()=>false});assert.throws(()=>f.context.recurringTransactions(),/already in progress/);assert.equal(f.writes(),0)});
+test('scheduler recovers after append succeeds and state update fails',()=>{
+ const f=scriptFixture();const spreadsheet=f.context.SpreadsheetApp.getActiveSpreadsheet();const get=spreadsheet.getSheetByName;let fail=true;
+ f.context.SpreadsheetApp.getActiveSpreadsheet=()=>({getSheetByName:name=>{const sheet=get(name);const range=sheet.getRange;sheet.getRange=(...args)=>{const value=range(...args);const set=value.setValues;value.setValues=rows=>{if(fail){fail=false;throw new Error('Synthetic interrupted state update')}set(rows)};return value};return sheet}});
+ assert.throws(()=>f.context.recurringTransactions(),/interrupted/);assert.equal(f.rows.transactions.length,2);
+ f.context.recurringTransactions();assert.equal(f.rows.transactions.length,2);assert.equal(f.rule().remainingCount,'1');assert.equal(f.rule().nextRunDate,'2026-02-28');
+});
+test('scheduler row state update preserves existing formulas',()=>{
+ const f=scriptFixture();const spreadsheet=f.context.SpreadsheetApp.getActiveSpreadsheet();const get=spreadsheet.getSheetByName;
+ f.context.SpreadsheetApp.getActiveSpreadsheet=()=>({getSheetByName:name=>{const sheet=get(name);const range=sheet.getRange;sheet.getRange=(...args)=>{const value=range(...args);value.getFormulas=()=>{const formulas=Array(args[3]).fill('');formulas[3]='="Fixture category"';return [formulas]};return value};return sheet}});
+ f.context.recurringTransactions();assert.equal(f.rule().category,'="Fixture category"');
+});
