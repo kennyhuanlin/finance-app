@@ -31,6 +31,14 @@ for(const [date,frequency,anchor,expected] of [
  ['2026-12-28','weekly',undefined,'2027-01-04'],['2026-02-30','monthly',undefined,''],['2026-01-01','bogus',undefined,''],
 ]) test(`date ${date} ${frequency}`,()=>assert.equal(addPeriod(date,frequency,anchor),expected));
 test('valid full recurring and partial pause payloads',()=>{assert.equal(validateRecurringRule(validRule),'');assert.equal(validateRecurringRule({enabled:false},true),'');});
+test('legacy edits allow only missing start dates; new rules and malformed dates remain rejected',()=>{
+ for(const startDate of ['',undefined,null]) {
+  assert.ok(validateRecurringRule({...validRule,startDate}));
+  assert.equal(validateRecurringRule({...validRule,startDate},false,true),'');
+ }
+ assert.ok(validateRecurringRule({...validRule,startDate:'2026-02-30'},false,true));
+ assert.ok(validateRecurringRule({...validRule,startDate:'',nextRunDate:''},false,true));
+});
 for(const patch of [{name:' '},{category:''},{amount:0},{amount:NaN},{amount:Infinity},{remainingCount:'-1'},{remainingCount:'1.2'},{startDate:'2026-02-30'},{nextRunDate:''},{endDate:'2025-12-31'},{frequency:'bogus'}]) test(`invalid recurring ${JSON.stringify(patch)}`,()=>assert.ok(validateRecurringRule({...validRule,...patch})));
 test('auth fail-closed, exact credential and CSRF checks',()=>{
  assert.equal(requireFinanceAccess(request()),null);
@@ -84,6 +92,20 @@ test('service-account recurring CRUD and investment GET have no read-side writes
  assert.equal((await require('../app/api/google/investments/prices/route.ts').GET(request())).status,200);
  assert.ok(calls.every(call=>call.method==='GET'),JSON.stringify(calls));
  assert.equal((await route.PUT(request('', 'PUT',{id:'fixture-rule',enabled:false}),ctx)).status,200);
+ const startColumn=fixture.recurring_rules[0].indexOf('startDate');
+ for(const existingStart of ['', '2026-01-31']) {
+  fixture.recurring_rules[1][startColumn]=existingStart;
+  calls=[];
+  assert.equal((await route.PUT(request('', 'PUT',{...validRule,startDate:'',name:'Synthetic legacy edit'}),ctx)).status,200);
+  const writes=calls.filter(call=>call.url.includes('/values:batchUpdate')).flatMap(call=>JSON.parse(call.body).data);
+  assert.ok(writes.length>0);
+  assert.ok(writes.every(write=>write.range!==`recurring_rules!${String.fromCharCode(65+startColumn)}2`),'blank updates must not write startDate');
+ }
+ calls=[];
+ assert.equal((await route.POST(request('', 'POST',{...validRule,startDate:''}),ctx)).status,400);
+ assert.equal(calls.length,0);
+ assert.equal((await route.PUT(request('', 'PUT',{...validRule,startDate:'2026-02-30'}),ctx)).status,400);
+ assert.equal(calls.length,0);
  assert.equal((await route.DELETE(request('', 'DELETE',{id:'fixture-rule'}),ctx)).status,200);
  global.fetch=async()=>{throw new Error('Unmocked network access prohibited');};
 });
@@ -113,6 +135,16 @@ test('scheduler duplicate suppression, anchored month end and remaining periods'
  f.rows.recurring_rules[1][7]='2026-01-31';f.context.recurringTransactions();assert.equal(f.rows.transactions.length,2);assert.equal(f.rule().remainingCount,'1');assert.equal(f.released(),2);
 });
 test('scheduler quarterly and exhaustion',()=>{const f=scriptFixture({frequency:'quarterly',remainingCount:'1'});f.context.recurringTransactions();assert.equal(f.rule().nextRunDate,'2026-04-30');assert.equal(f.rule().enabled,false);});
+for(const frequency of ['monthly','quarterly']) test(`scheduler repeated ${frequency} preserves anchored month ends`,()=>{
+ const f=scriptFixture({frequency,remainingCount:''});
+ const expected=frequency==='monthly'?['2026-02-28','2026-03-31','2026-04-30']:['2026-04-30','2026-07-31','2026-10-31'];
+ for(const next of expected){f.context.recurringTransactions();assert.equal(f.rule().nextRunDate,next);}
+ assert.equal(f.rows.transactions.length,4);
+});
+for(const [frequency,expected] of [['monthly','2026-02-28'],['quarterly','2026-04-30']]) test(`legacy scheduler ${frequency} uses next date without backfilling start`,()=>{
+ const f=scriptFixture({startDate:'',frequency});f.context.recurringTransactions();
+ assert.equal(f.rule().startDate,'');assert.equal(f.rule().nextRunDate,expected);assert.equal(f.rows.transactions.length,2);
+});
 for(const patch of [{enabled:false},{remainingCount:'0'},{remainingCount:'broken'},{amount:0},{nextRunDate:'2026-02-30'}]) test(`scheduler skips invalid/inactive ${JSON.stringify(patch)}`,()=>{const f=scriptFixture(patch);f.context.recurringTransactions();assert.equal(f.rows.transactions.length,1);assert.equal(f.writes(),0)});
 test('scheduler concurrent run fails before sheet access',()=>{const f=scriptFixture();f.context.LockService.getScriptLock=()=>({tryLock:()=>false});assert.throws(()=>f.context.recurringTransactions(),/already in progress/);assert.equal(f.writes(),0)});
 test('scheduler recovers after append succeeds and state update fails',()=>{
