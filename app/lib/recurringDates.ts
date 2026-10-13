@@ -24,7 +24,7 @@ export function addPeriod(value: string, frequency: string, anchor = value) {
   return date.toISOString().slice(0, 10);
 }
 
-export function validateRecurringRule(rule: Record<string, unknown>, partial = false) {
+export function validateRecurringRule(rule: Record<string, unknown>, partial = false, allowMissingStart = false) {
   const has = (key: string) => !partial || Object.prototype.hasOwnProperty.call(rule, key);
   if (has("name") && !String(rule.name ?? "").trim()) return "請輸入名稱";
   if (has("category") && !String(rule.category ?? "").trim()) return "請選擇分類";
@@ -33,6 +33,7 @@ export function validateRecurringRule(rule: Record<string, unknown>, partial = f
   if (has("frequency") && !["daily", "weekly", "monthly", "quarterly", "yearly"].includes(String(rule.frequency))) return "請選擇有效週期";
   if (has("type") && !["支出", "收入", "expense", "income"].includes(String(rule.type))) return "請選擇收入或支出";
   for (const key of ["startDate", "nextRunDate"]) {
+    if (key === "startDate" && allowMissingStart && !String(rule.startDate ?? "").trim()) continue;
     if (has(key) && !isDateOnly(String(rule[key] ?? ""))) return key === "startDate" ? "請設定有效的開始日期" : "請設定有效的下次執行日";
   }
   if (rule.endDate && !isDateOnly(String(rule.endDate))) return "請設定有效的結束日期";
