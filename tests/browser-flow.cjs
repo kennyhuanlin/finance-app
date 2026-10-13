@@ -5,7 +5,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 async function main() {
  const server = spawn(process.execPath, ['node_modules/next/dist/bin/next','dev','--webpack','--hostname','127.0.0.1','--port','45817'], {
-  env:{...process.env,FINANCE_APP_USERNAME:'fixture-owner',FINANCE_APP_PASSWORD:'fixture-only-012345678901234567890123456789',GOOGLE_SCRIPT_API_TOKEN:'fixture-only-012345678901234567890123456789',GOOGLE_SCRIPT_URL:'http://127.0.0.1:45999/fixture',GOOGLE_SERVICE_ACCOUNT_EMAIL:'',GOOGLE_PRIVATE_KEY:'',GOOGLE_SHEET_ID:'',NODE_OPTIONS:'--require ./tests/browser-fixture.cjs'},stdio:['ignore','pipe','pipe']});
+  env:{...process.env,FINANCE_APP_USERNAME:'fixture-owner',FINANCE_APP_ORIGIN:'http://127.0.0.1:45817',FINANCE_APP_PASSWORD:'fixture-only-012345678901234567890123456789',GOOGLE_SCRIPT_API_TOKEN:'fixture-only-012345678901234567890123456789',GOOGLE_SCRIPT_URL:'http://127.0.0.1:45999/fixture',GOOGLE_SERVICE_ACCOUNT_EMAIL:'',GOOGLE_PRIVATE_KEY:'',GOOGLE_SHEET_ID:'',NODE_OPTIONS:'--require ./tests/browser-fixture.cjs'},stdio:['ignore','pipe','pipe']});
  let log='';server.stdout.on('data',data=>log+=data);server.stderr.on('data',data=>log+=data);
  let browser, page;
  try {
