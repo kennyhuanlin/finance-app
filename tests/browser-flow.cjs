@@ -17,7 +17,7 @@ async function main() {
   await page.getByRole('button',{name:'新增固定支出',exact:true}).first().click();
   const form=page.getByRole('dialog',{name:'固定收支表單'});
   await form.waitFor();
-  assert.equal(await form.getByLabel('分類',{exact:true}).inputValue(),'測試支出');
+  assert.equal(await form.getByRole('combobox',{name:/分類/}).inputValue(),'測試支出');
   await form.getByRole('button',{name:'儲存',exact:true}).click();
   await page.getByRole('alert').filter({hasText:'請輸入名稱'}).waitFor();
   await form.getByLabel('名稱',{exact:true}).fill('模擬失敗');
@@ -28,15 +28,15 @@ async function main() {
   await form.getByLabel('名稱',{exact:true}).fill('隔離固定支出');
   await form.getByLabel('開始日期',{exact:true}).fill('2026-01-31');
   assert.equal(await form.getByLabel('下次執行日',{exact:true}).inputValue(),'2026-02-28');
-  await form.getByLabel('週期',{exact:true}).selectOption('quarterly');
+  await form.getByRole('combobox',{name:/週期/}).selectOption('quarterly');
   assert.equal(await form.getByLabel('下次執行日',{exact:true}).inputValue(),'2026-04-30');
   await form.getByRole('button',{name:'儲存',exact:true}).click();
   await form.waitFor({state:'hidden'});
   await page.getByText('隔離固定支出',{exact:true}).waitFor();
   fs.mkdirSync('test-results',{recursive:true});await page.screenshot({path:'test-results/recurring-mobile.png',fullPage:true});
   await page.getByRole('button',{name:'新增固定支出',exact:true}).first().click();await form.waitFor();
-  await form.getByLabel('類型',{exact:true}).selectOption('收入');
-  assert.equal(await form.getByLabel('分類',{exact:true}).inputValue(),'測試收入');
+  await form.getByRole('combobox',{name:/類型/}).selectOption('收入');
+  assert.equal(await form.getByRole('combobox',{name:/分類/}).inputValue(),'測試收入');
   await form.getByLabel('名稱',{exact:true}).fill('隔離固定收入');await form.getByRole('button',{name:'2',exact:true}).click();
   await form.getByRole('button',{name:'儲存',exact:true}).click();await form.waitFor({state:'hidden'});
   await page.getByRole('button',{name:'固定收入',exact:true}).click();await page.getByText('隔離固定收入',{exact:true}).waitFor();
