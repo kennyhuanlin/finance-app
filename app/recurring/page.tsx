@@ -819,7 +819,7 @@ export default function RecurringPage() {
         {categoriesError || (!isLoadingCategories && !categoriesReady) ? (
           <div role="alert" className="rounded-[22px] bg-rose-50 px-4 py-3 text-sm text-rose-700">
             <p>{categoriesError ? `分類載入失敗：${categoriesError}` : "尚無可用分類"}</p>
-            <button type="button" disabled={isLoadingCategories} onClick={() => void refreshCategories()} className="mt-2 min-h-11 underline">重新載入分類</button>
+            <button type="button" disabled={isLoadingCategories} onClick={() => { setStatusMessage(""); void refreshCategories(); }} className="mt-2 min-h-11 underline">重新載入分類</button>
             <Link href="/categories" className="ml-4 underline">管理分類</Link>
           </div>
         ) : null}
@@ -1110,7 +1110,7 @@ export default function RecurringPage() {
             {categoriesError || !categoriesReady ? (
               <div role="alert" className="mb-4 rounded-2xl bg-rose-50 p-3 text-sm text-rose-700">
                 <p>{isLoadingCategories ? "分類載入中..." : categoriesError || "尚無可用分類"}</p>
-                <button type="button" disabled={isLoadingCategories || isSaving} onClick={() => void refreshCategories()} className="min-h-11 underline">重新載入分類</button>
+                <button type="button" disabled={isLoadingCategories || isSaving} onClick={() => { setFormMessage(""); void refreshCategories(); }} className="min-h-11 underline">重新載入分類</button>
               </div>
             ) : null}
             <div className="grid gap-3">
