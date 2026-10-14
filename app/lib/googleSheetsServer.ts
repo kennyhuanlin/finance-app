@@ -645,18 +645,19 @@ export async function replaceWorksheetRows(
     return { ok: true, count: records.length, changed: false };
   }
 
-  const { spreadsheetId } = getConfig();
-  const range = encodeURIComponent(`${sheet}!A:Z`);
-  await googleWriteRequest(
-    `${SHEETS_API}/${encodeURIComponent(spreadsheetId)}/values/${range}:clear`,
-    { method: "POST", body: "{}" },
-  );
-  await writeValues(sheet, "A1", [
+  // Replace and clear obsolete tail cells in one request. A failed write must
+  // never leave a cleared worksheet behind before the new snapshot is written.
+  const width = Math.max(headers.length, ...currentValues.map((row) => row.length));
+  const nextValues: unknown[][] = [
     headers,
     ...records.map((record) =>
       headers.map((header) => normalizeCell(record[header])),
     ),
-  ]);
+  ];
+  const height = Math.max(currentValues.length, nextValues.length);
+  await writeValues(sheet, "A1", Array.from({ length: height }, (_, row) =>
+    Array.from({ length: width }, (_, column) => nextValues[row]?.[column] ?? ""),
+  ));
   invalidateWorksheetCache(sheet);
   return { ok: true, count: records.length, changed: true };
 }
