@@ -138,6 +138,7 @@ export function CategoriesProvider({ children }: { children: ReactNode }) {
   const [categoriesError, setCategoriesError] = useState("");
 
   const refreshCategories = useCallback(async () => {
+    setIsLoadingCategories(true);
     try {
       setCategories(await loadCategoriesFromNetwork());
       setCategoriesError("");
@@ -174,13 +175,21 @@ export function CategoriesProvider({ children }: { children: ReactNode }) {
   }, [refreshCategories]);
 
   const ensureCategories = useCallback(async (timeoutMs = 2000) => {
-    const cached = readCategoryCache();
-    if (cached?.length) return cached;
-    const loaded = await withTimeout(loadCategoriesFromNetwork(), timeoutMs);
-    setCategories(loaded);
-    setCategoriesError("");
-    setIsLoadingCategories(false);
-    return loaded;
+    setIsLoadingCategories(true);
+    try {
+      const loaded = pendingCategories
+        ? await withTimeout(pendingCategories, timeoutMs)
+        : readCategoryCache() ?? await withTimeout(loadCategoriesFromNetwork(), timeoutMs);
+      // Publish cached and network results together with readiness before opening a form.
+      setCategories(loaded);
+      setCategoriesError("");
+      return loaded;
+    } catch (error) {
+      setCategoriesError(error instanceof Error ? error.message : "分類載入失敗");
+      throw error;
+    } finally {
+      setIsLoadingCategories(false);
+    }
   }, []);
 
   const value = useMemo<CategoriesContextValue>(
