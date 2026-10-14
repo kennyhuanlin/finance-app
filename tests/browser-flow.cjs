@@ -36,11 +36,12 @@ async function main() {
   assert.equal(await legacyForm.getByLabel('下次執行日',{exact:true}).inputValue(),'2026-01-31');
   await legacyForm.getByRole('button',{name:'儲存',exact:true}).click();await legacyForm.waitFor({state:'hidden'});
   await page.getByText('歷史固定支出已編輯',{exact:true}).waitFor();
-  const readRules=async()=>{const r=await context.request.get('http://127.0.0.1:45817/api/google/recurring');assert.equal(r.status(),200);const body=await r.json();return Array.isArray(body)?body:body.data;};
+  const authorization='Basic '+Buffer.from('fixture-owner:fixture-only-012345678901234567890123456789').toString('base64');
+  const readRules=async()=>{const r=await context.request.get('http://127.0.0.1:45817/api/google/recurring',{headers:{authorization}});assert.equal(r.status(),200);const body=await r.json();return Array.isArray(body)?body:body.data;};
   const edited=(await readRules()).find(row=>row.id==='fixture-legacy-1');
   assert.equal(edited.startDate,'');assert.equal(edited.nextRunDate,'2026-01-31');assert.equal(edited.lastRunDate,'2025-12-31');assert.equal(edited.remainingCount,'4');assert.equal(edited.enabled,true);
   // All 14 legacy shapes accept edits without touching their schedule state.
-  const mutationHeaders={origin:'http://127.0.0.1:45817','content-type':'application/json'};
+  const mutationHeaders={authorization,origin:'http://127.0.0.1:45817','content-type':'application/json'};
   const before=await readRules();assert.equal(before.filter(row=>row.id.startsWith('fixture-legacy-')).length,14);
   for(const row of before){const r=await context.request.put('http://127.0.0.1:45817/api/google/recurring',{headers:mutationHeaders,data:{id:row.id,name:row.name,category:'測試支出',amount:222,note:'合成修改',remainingCount:row.remainingCount,startDate:''}});assert.equal(r.status(),200);}
   const after=await readRules();
@@ -91,7 +92,7 @@ async function main() {
   assert.equal(await retryPage.getByRole('dialog',{name:'固定收支表單'}).count(),0);
   failCategories=false;
   await retryPage.getByRole('button',{name:'重新載入分類',exact:true}).click();
-  await retryPage.getByRole('alert').filter({hasText:'合成分類服務失敗'}).waitFor({state:'hidden'});
+  await retryPage.waitForFunction(()=>Array.from(document.querySelectorAll('[role="alert"]')).every(node=>!node.textContent.includes('合成分類服務失敗')));
   await retryPage.getByRole('button',{name:'新增固定支出',exact:true}).first().click();
   const retryForm=retryPage.getByRole('dialog',{name:'固定收支表單'});await retryForm.waitFor();
   assert.equal(await retryForm.getByRole('combobox',{name:/分類/}).inputValue(),'測試支出');
