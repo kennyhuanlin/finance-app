@@ -73,6 +73,15 @@ async function main() {
   await form.getByLabel('名稱',{exact:true}).fill('隔離固定收入');await form.getByRole('button',{name:'2',exact:true}).click();
   await form.getByRole('button',{name:'儲存',exact:true}).click();await form.waitFor({state:'hidden'});
   await page.getByRole('button',{name:'固定收入',exact:true}).click();await page.getByText('隔離固定收入',{exact:true}).waitFor();
+  await page.getByRole('button',{name:'隔離固定收入暫停',exact:true}).click();
+  await page.getByRole('button',{name:'隔離固定收入啟用',exact:true}).waitFor();
+  const paused=(await readRules()).find(row=>row.name==='隔離固定收入');assert.equal(paused.enabled,false);
+  await context.request.put('http://127.0.0.1:45817/api/google/recurring',{headers:mutationHeaders,data:{id:paused.id,nextRunDate:'2026-01-31'}});
+  await page.getByRole('button',{name:'隔離固定收入啟用',exact:true}).click();
+  await page.getByRole('button',{name:'隔離固定收入暫停',exact:true}).waitFor();
+  const resumed=(await readRules()).find(row=>row.id===paused.id);
+  const today=new Date().toISOString().slice(0,10);
+  assert.ok(resumed.nextRunDate>today);assert.equal(resumed.lastRunDate,paused.lastRunDate);assert.equal(resumed.remainingCount,paused.remainingCount);
   await page.getByRole('button',{name:'查看詳情',exact:true}).first().click();
   page.once('dialog',dialog=>dialog.accept());
   await page.getByRole('button',{name:'刪除',exact:true}).first().click();
@@ -83,6 +92,23 @@ async function main() {
   assert.equal((await context.request.post(txUrl,{headers:mutationHeaders,data:{id:'fixture-tx',date:'2026-01-31',type:'支出',category:'測試支出',amount:3}})).status(),200);
   assert.equal((await context.request.put(txUrl,{headers:mutationHeaders,data:{id:'fixture-tx',note:'合成編輯'}})).status(),200);
   assert.equal((await context.request.delete(txUrl,{headers:mutationHeaders,data:{id:'fixture-tx'}})).status(),200);
+  await page.goto('http://127.0.0.1:45817/transactions');
+  await page.getByRole('button',{name:'新增',exact:true}).click();
+  const txForm=page.getByRole('dialog',{name:'交易表單'});await txForm.waitFor();
+  await txForm.getByRole('combobox',{name:'分類',exact:true}).selectOption('測試支出');
+  await txForm.getByLabel('開啟金額計算機',{exact:true}).click();
+  const calculator=page.getByRole('dialog',{name:'金額計算機'});await calculator.waitFor();
+  await calculator.getByRole('button',{name:'3',exact:true}).click();await calculator.getByRole('button',{name:'確認 OK',exact:true}).click();
+  await txForm.getByLabel('備註',{exact:true}).fill('一般交易失敗測試');
+  await page.route('**/api/google/transactions',route=>route.request().method()==='POST'&&route.request().postDataJSON().note==='一般交易失敗測試'?route.fulfill({status:400,contentType:'application/json',body:JSON.stringify({error:'合成一般交易失敗'})}):route.continue());
+  await txForm.getByRole('button',{name:'儲存',exact:true}).click();await txForm.getByRole('alert').filter({hasText:'合成一般交易失敗'}).waitFor();
+  assert.equal(await txForm.getByLabel('備註',{exact:true}).inputValue(),'一般交易失敗測試');
+  await txForm.getByLabel('備註',{exact:true}).fill('手機合成交易');await txForm.getByRole('button',{name:'儲存',exact:true}).click();await txForm.waitFor({state:'hidden'});
+  await page.getByText('手機合成交易',{exact:true}).waitFor();await page.getByRole('button',{name:'編輯',exact:true}).first().click();await txForm.waitFor();
+  await txForm.getByLabel('備註',{exact:true}).fill('手機合成交易已修改');await page.screenshot({path:'test-results/transactions-mobile.png',fullPage:true});await txForm.getByRole('button',{name:'儲存',exact:true}).click();await txForm.waitFor({state:'hidden'});
+  await page.getByText('手機合成交易已修改',{exact:true}).waitFor();page.once('dialog',dialog=>dialog.accept());await page.getByRole('button',{name:'刪除',exact:true}).first().click();
+  await page.getByText('手機合成交易已修改',{exact:true}).waitFor({state:'hidden'});await page.unroute('**/api/google/transactions');
+  const remainingTx=await context.request.get(txUrl,{headers:{authorization}});assert.equal((await remainingTx.json()).length,0);
   const recovery=await browser.newContext({httpCredentials:{username:'fixture-owner',password:'fixture-only-012345678901234567890123456789'},viewport:{width:390,height:844}});
   const retryPage=await recovery.newPage();let failCategories=true;
   await retryPage.route('**/api/google/categories',route=>failCategories?route.fulfill({status:503,contentType:'application/json',body:JSON.stringify({error:'合成分類服務失敗'})}):route.continue());
@@ -98,8 +124,9 @@ async function main() {
   assert.equal(await retryForm.getByRole('combobox',{name:/分類/}).inputValue(),'測試支出');
   await recovery.close();
   const anonymous=await browser.newContext();const denied=await anonymous.request.get('http://127.0.0.1:45817/api/google/recurring');assert.equal(denied.status(),401);await anonymous.close();
-  console.log('Browser PASS: response-gated category race, 14 synthetic legacy edits preserve schedule state, category error/retry, recurring delete, transaction HTTP CRUD; legacy edit without start-date backfill, frequency change preserves next date, delayed categories, visible validation, server error preserves input, expense/income create, quarter/month end, anonymous API denied.');
+  console.log('Browser PASS: response-gated category race, 14 synthetic legacy edits preserve schedule state, category error/retry, recurring delete, transaction HTTP and mobile UI CRUD, visible server failure, pause/resume without catch-up; legacy edit without start-date backfill, frequency change preserves next date, delayed categories, visible validation, server error preserves input, expense/income create, quarter/month end, anonymous API denied.');
  } catch(error) {
+  if(page){fs.mkdirSync("test-results",{recursive:true});await page.screenshot({path:"test-results/browser-failure.png",fullPage:true}).catch(()=>{});}
   if(page) console.error("FIXTURE_DOM",await page.locator("body").innerText());
   console.error("FIXTURE_SERVER_LOG",log);throw error;
  } finally {if(browser)await browser.close();server.kill('SIGTERM');}
