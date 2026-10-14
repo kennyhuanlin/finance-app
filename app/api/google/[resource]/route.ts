@@ -1,15 +1,16 @@
+import { requireFinanceAccess } from "../../../lib/apiAccess";
 import { NextRequest, NextResponse } from "next/server";
 import {
   appendWorksheetRow,
   deleteWorksheetRow,
   ensureWorksheetExists,
-  ensureWorksheetRowIds,
   GoogleSheetsApiError,
   hasServiceAccountConfig,
   readWorksheetCachedWithRetry,
   type SupportedSheet,
   updateWorksheetRow,
 } from "../../../lib/googleSheetsServer";
+import { validateRecurringRule } from "../../../lib/recurringDates";
 import { normalizeBoolean } from "../../../lib/boolean";
 import {
   refreshCashAccounts,
@@ -44,7 +45,7 @@ type Resource = keyof typeof RESOURCE_CONFIG;
 type Context = { params: Promise<{ resource: string }> };
 
 function getSheet(resource: string) {
-  if (!(resource in RESOURCE_CONFIG)) {
+  if (!Object.prototype.hasOwnProperty.call(RESOURCE_CONFIG, resource)) {
     throw new ApiError(`Unsupported Google Sheets resource: ${resource}`, 404);
   }
   return RESOURCE_CONFIG[resource as Resource].sheetName;
@@ -57,7 +58,9 @@ class ApiError extends Error {
 }
 
 async function requestBody(request: NextRequest) {
-  const body = (await request.json()) as Record<string, unknown>;
+  let body: Record<string, unknown>;
+  try { body = await request.json(); } catch { throw new ApiError("Invalid JSON body", 400); }
+  if (!body || Array.isArray(body) || typeof body !== "object") throw new ApiError("Expected a JSON object", 400);
   delete body.sheet;
   delete body.action;
   return body;
@@ -101,26 +104,15 @@ async function appsScriptFallback(
   body?: Record<string, unknown>,
 ) {
   const url = appsScriptUrl();
-  const response =
-    method === "GET"
-      ? await fetch(`${url}?sheet=${encodeURIComponent(sheet)}`, {
-          cache: "no-store",
-        })
-      : await fetch(url, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            sheet,
-            action:
-              method === "POST"
-                ? "create"
-                : method === "PUT"
-                  ? "update"
-                  : "delete",
-            ...body,
-          }),
-          cache: "no-store",
-        });
+  const token = process.env.GOOGLE_SCRIPT_API_TOKEN;
+  if (!token || token.length < 32) throw new ApiError("Apps Script fallback protection is not configured", 503);
+  const response = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ ...body, sheet, token,
+      action: method === "GET" ? "read" : method === "POST" ? "create" : method === "PUT" ? "update" : "delete" }),
+    cache: "no-store",
+  });
   const text = await response.text();
   const parsed = (() => {
     try {
@@ -129,6 +121,7 @@ async function appsScriptFallback(
       return null;
     }
   })();
+  if (!parsed) throw new ApiError("Apps Script returned an invalid response", 502);
   const fallbackError = parsed?.error ??
     (parsed?.success === false ? parsed.message ?? "Apps Script request failed" : "");
   const status = fallbackError
@@ -147,10 +140,6 @@ function shouldUseAppsScriptFallback() {
 }
 
 async function readSheetWithRetry(sheet: SupportedSheet) {
-  await ensureWorksheetExists(sheet);
-  if (sheet === "investment_trades") {
-    await ensureWorksheetRowIds(sheet, "trade");
-  }
   return readWorksheetCachedWithRetry(sheet);
 }
 
@@ -189,7 +178,9 @@ function errorResponse(
   );
 }
 
-export async function GET(_request: NextRequest, context: Context) {
+export async function GET(request: NextRequest, context: Context) {
+  const denied = requireFinanceAccess(request);
+  if (denied) return denied;
   const { resource } = await context.params;
   let sheetName = "";
   try {
@@ -205,12 +196,18 @@ export async function GET(_request: NextRequest, context: Context) {
 }
 
 export async function POST(request: NextRequest, context: Context) {
+  const denied = requireFinanceAccess(request);
+  if (denied) return denied;
   const { resource } = await context.params;
   let sheetName = "";
   try {
     const sheet = getSheet(resource);
     sheetName = sheet;
     const body = normalizeResourceBody(sheet, await requestBody(request));
+    if (sheet === "recurring_rules") {
+      const message = validateRecurringRule(body);
+      if (message) throw new ApiError(message, 400);
+    }
     if (shouldUseAppsScriptFallback()) {
       return appsScriptFallback("POST", sheet, body);
     }
@@ -244,6 +241,8 @@ export async function POST(request: NextRequest, context: Context) {
 }
 
 export async function PUT(request: NextRequest, context: Context) {
+  const denied = requireFinanceAccess(request);
+  if (denied) return denied;
   const { resource } = await context.params;
   let sheetName = "";
   let recordId = "";
@@ -251,6 +250,12 @@ export async function PUT(request: NextRequest, context: Context) {
     const sheet = getSheet(resource);
     sheetName = sheet;
     const body = normalizeResourceBody(sheet, await requestBody(request));
+    if (sheet === "recurring_rules") {
+      // Legacy rules have no start date. Empty updates must neither backfill nor erase it.
+      if (!String(body.startDate ?? "").trim()) delete body.startDate;
+      const message = validateRecurringRule(body, true);
+      if (message) throw new ApiError(message, 400);
+    }
     const id = requireId(body);
     recordId = id;
     if (shouldUseAppsScriptFallback()) {
@@ -266,6 +271,8 @@ export async function PUT(request: NextRequest, context: Context) {
 }
 
 export async function DELETE(request: NextRequest, context: Context) {
+  const denied = requireFinanceAccess(request);
+  if (denied) return denied;
   const { resource } = await context.params;
   let sheetName = "";
   let recordId = "";

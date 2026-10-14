@@ -59,23 +59,29 @@ function setupInvestmentSheets() {
   });
 }
 
-function doGet(event) {
-  try {
-    const name = String(event.parameter.sheet || "");
-    const sheet = getApiSheet(name);
-    const table = readTable(sheet);
-    return jsonOutput(table.rows);
-  } catch (error) {
-    return jsonOutput({ error: error.message });
-  }
+function doGet() {
+  return jsonOutput({ error: "Authenticated POST required" });
+}
+
+function requireApiToken(token) {
+  const expected = PropertiesService.getScriptProperties().getProperty("FINANCE_API_TOKEN");
+  if (!expected || expected.length < 32 || token !== expected) throw new Error("Unauthorized");
 }
 
 function doPost(event) {
+  let lock;
   try {
     const payload = JSON.parse(event.postData.contents || "{}");
+    requireApiToken(payload.token);
     const sheet = getApiSheet(String(payload.sheet || ""));
     const action = String(payload.action || "create");
+    if (action !== "read") {
+      lock = LockService.getScriptLock();
+      if (!lock.tryLock(1000)) throw new Error("Another write is in progress");
+    }
     const table = readTable(sheet);
+
+    if (action === "read") return jsonOutput(table.rows);
 
     if (action === "create") {
       sheet.appendRow(toRow(table.headers, payload));
@@ -102,6 +108,8 @@ function doPost(event) {
     throw new Error("Unsupported action");
   } catch (error) {
     return jsonOutput({ error: error.message });
+  } finally {
+    if (lock) lock.releaseLock();
   }
 }
 

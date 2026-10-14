@@ -1,10 +1,11 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { ChevronDown, ChevronUp, Pencil, Trash2 } from "lucide-react";
 import { useCategories } from "../categories-context";
 import { formatCategoryLabel } from "../lib/categories";
+import { addPeriod, validateRecurringRule } from "../lib/recurringDates";
 import { normalizeBoolean } from "../lib/boolean";
 import {
   createRecurringRule,
@@ -179,16 +180,6 @@ function normalizeRemainingCount(value: unknown) {
   return Number.isFinite(count) ? String(count) : "";
 }
 
-function isValidRemainingCount(value: string) {
-  if (value.trim().length === 0) {
-    return true;
-  }
-
-  const count = Number(value);
-
-  return Number.isInteger(count) && count >= 0;
-}
-
 function hasExpiredEndDate(rule: { endDate: string }) {
   const endDateDateOnly = normalizeDateOnly(rule.endDate);
 
@@ -227,35 +218,6 @@ function getMonthlyAmount(rule: RecurringRule) {
   }
 
   return rule.amount;
-}
-
-function addPeriod(date: string, frequency: string) {
-  const dateOnly = normalizeDateOnly(date);
-
-  if (!dateOnly) {
-    return "";
-  }
-
-  const [year, month, day] = dateOnly.split("-").map(Number);
-  const nextDate = new Date(year, month - 1, day);
-
-  if (frequency === "daily") {
-    nextDate.setDate(nextDate.getDate() + 1);
-  } else if (frequency === "weekly") {
-    nextDate.setDate(nextDate.getDate() + 7);
-  } else if (frequency === "quarterly") {
-    nextDate.setMonth(nextDate.getMonth() + 3);
-  } else if (frequency === "yearly") {
-    nextDate.setFullYear(nextDate.getFullYear() + 1);
-  } else {
-    nextDate.setMonth(nextDate.getMonth() + 1);
-  }
-
-  const nextYear = nextDate.getFullYear();
-  const nextMonth = String(nextDate.getMonth() + 1).padStart(2, "0");
-  const nextDay = String(nextDate.getDate()).padStart(2, "0");
-
-  return `${nextYear}-${nextMonth}-${nextDay}`;
 }
 
 function formatDate(date: string) {
@@ -426,7 +388,9 @@ function CategoriesIcon() {
 }
 
 export default function RecurringPage() {
-  const { categories } = useCategories();
+  const { categories, isLoadingCategories, categoriesReady, categoriesError, ensureCategories, refreshCategories } = useCategories();
+  const saveInFlight = useRef(false);
+  const [formMessage, setFormMessage] = useState("");
   const expenseCategories = categories.filter((item) => item.type === "expense");
   const incomeCategories = categories.filter((item) => item.type === "income");
   const [rules, setRules] = useState<RecurringRule[]>([]);
@@ -522,6 +486,7 @@ export default function RecurringPage() {
       await updateRecurringRule(rule.id, {
         id: rule.id,
         enabled,
+        ...(enabled ? { nextRunDate: addPeriod(todayDateOnly(), rule.frequency, rule.startDate || todayDateOnly()) } : {}),
       });
       await loadRules();
     } catch (error) {
@@ -537,11 +502,18 @@ export default function RecurringPage() {
     }
   }
 
-  function openCreateForm() {
+  async function openCreateForm() {
+    setFormMessage("");
+    let loaded;
+    try { loaded = await ensureCategories(10000); } catch (error) {
+      setStatusMessage(`分類載入失敗：${error instanceof Error ? error.message : "請重試"}`);
+      return;
+    }
     const startDate = todayDateOnly();
     const type = activeTab === "income" ? "收入" : "支出";
     const categoryOptions =
-      activeTab === "income" ? incomeCategories : expenseCategories;
+      loaded.filter((category) => category.type === (activeTab === "income" ? "income" : "expense"));
+    if (!categoryOptions.length) { setStatusMessage("尚無可用分類，請先管理分類或重新載入分類"); return; }
 
     setEditingRule({
       ...emptyForm,
@@ -550,6 +522,7 @@ export default function RecurringPage() {
       necessity: type === "收入" ? "" : "必要",
       expenseType: type === "收入" ? "" : "固定",
       category: categoryOptions[0]?.name ?? "",
+      categoryId: categoryOptions[0]?.id,
       startDate,
       nextRunDate: addPeriod(startDate, emptyForm.frequency),
       manualNextRunDate: false,
@@ -557,7 +530,12 @@ export default function RecurringPage() {
     setAmountKeyboardOpen(true);
   }
 
-  function openEditForm(rule: RecurringRule) {
+  async function openEditForm(rule: RecurringRule) {
+    try {
+      const loaded = await ensureCategories(10000);
+      if (!loaded.length) { setStatusMessage("尚無可用分類，請先管理分類或重新載入分類"); return; }
+    } catch (error) { setStatusMessage(`分類載入失敗：${error instanceof Error ? error.message : "請重試"}`); return; }
+    setFormMessage("");
     setEditingRule({
       ...rule,
       amount: String(rule.amount),
@@ -594,13 +572,14 @@ export default function RecurringPage() {
       if (key === "category") {
         const nextCategory = String(value);
         next.categoryId = categories.find(
-          (category) => category.name === nextCategory,
+          (category) => category.name === nextCategory && category.type === (current.type === "收入" ? "income" : "expense"),
         )?.id;
       }
 
       if (
         (key === "startDate" || key === "frequency") &&
-        !current.manualNextRunDate
+        !current.manualNextRunDate &&
+        (key === "startDate" ? Boolean(value) : Boolean(current.startDate))
       ) {
         next.nextRunDate = addPeriod(
           key === "startDate" ? String(value) : current.startDate,
@@ -670,7 +649,7 @@ export default function RecurringPage() {
         status: "active",
         nextRunDate: current.manualNextRunDate
           ? current.nextRunDate
-          : addPeriod(todayDateOnly(), current.frequency),
+          : addPeriod(todayDateOnly(), current.frequency, current.startDate || todayDateOnly()),
       };
     });
   }
@@ -678,16 +657,18 @@ export default function RecurringPage() {
   async function saveRule(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
-    if (
-      !editingRule ||
-      !editingRule.name.trim() ||
-      !editingRule.category.trim() ||
-      Number(editingRule.amount) <= 0 ||
-      !isValidRemainingCount(editingRule.remainingCount) ||
-      isSaving
-    ) {
-      return;
+    if (!editingRule || saveInFlight.current) return;
+    const previousRule = rules.find((rule) => rule.id === editingRule.id);
+    const validation = validateRecurringRule(editingRule, false, Boolean(previousRule && !previousRule.startDate));
+    if (validation) { setFormMessage(validation); return; }
+    if (!categoriesReady || categoriesError) {
+      setFormMessage("分類尚未載入完成，請重新載入分類"); return;
     }
+    const selectedCategory = categories.find((category) =>
+      category.name === editingRule.category && category.type === (editingRule.type === "收入" ? "income" : "expense"));
+    if (!selectedCategory) { setFormMessage("分類已變更，請重新選擇分類"); return; }
+    saveInFlight.current = true;
+    setFormMessage("");
 
     const id = editingRule.id ?? `recurring-${Date.now()}`;
     const isIncome = isIncomeRule(editingRule);
@@ -699,8 +680,7 @@ export default function RecurringPage() {
       necessity: isIncome ? "" : editingRule.necessity,
       category: editingRule.category,
       categoryId:
-        categories.find((category) => category.name === editingRule.category)
-          ?.id ?? editingRule.categoryId,
+        selectedCategory.id,
       amount: Number(editingRule.amount),
       frequency: editingRule.frequency,
       expenseType: isIncome ? "" : "固定",
@@ -768,9 +748,11 @@ export default function RecurringPage() {
       );
       setEditingRule(null);
       setAmountKeyboardOpen(false);
-    } catch {
-      setStatusMessage("固定支出儲存失敗");
+    } catch (error) {
+      const status = error instanceof SheetRequestError ? `（${error.status}）` : "";
+      setFormMessage(`固定收支儲存失敗${status}：${error instanceof Error ? error.message : "連線失敗，請稍後重試"}`);
     } finally {
+      saveInFlight.current = false;
       setIsSaving(false);
     }
   }
@@ -829,9 +811,17 @@ export default function RecurringPage() {
         </header>
 
         {statusMessage ? (
-          <p className="rounded-[22px] bg-rose-50 px-4 py-3 text-sm font-medium text-rose-600">
+          <p role="alert" className="rounded-[22px] bg-rose-50 px-4 py-3 text-sm font-medium text-rose-600">
             {statusMessage}
           </p>
+        ) : null}
+        {isLoadingCategories ? <p role="status" className="text-sm text-slate-500">分類載入中...</p> : null}
+        {categoriesError || (!isLoadingCategories && !categoriesReady) ? (
+          <div role="alert" className="rounded-[22px] bg-rose-50 px-4 py-3 text-sm text-rose-700">
+            <p>{categoriesError ? `分類載入失敗：${categoriesError}` : "尚無可用分類"}</p>
+            <button type="button" disabled={isLoadingCategories} onClick={() => { setStatusMessage(""); void refreshCategories(); }} className="mt-2 min-h-11 underline">重新載入分類</button>
+            <Link href="/categories" className="ml-4 underline">管理分類</Link>
+          </div>
         ) : null}
 
         <div className="grid grid-cols-2 rounded-full border border-white/70 bg-white/75 p-1 shadow-sm shadow-slate-200/80 backdrop-blur-xl">
@@ -1085,6 +1075,10 @@ export default function RecurringPage() {
         <div className="fixed inset-0 z-30 flex items-end bg-slate-950/30 px-3 pb-3 backdrop-blur-sm sm:items-center sm:justify-center">
           <form
             onSubmit={saveRule}
+            noValidate
+            role="dialog"
+            aria-modal="true"
+            aria-label="固定收支表單"
             className="max-h-[calc(100dvh-1.5rem)] w-full max-w-xl overflow-y-auto rounded-[32px] border border-white/80 bg-white px-5 pt-5 pb-[calc(8rem+env(safe-area-inset-bottom))] shadow-2xl shadow-slate-950/20"
           >
             <div className="mb-5 flex items-center justify-between gap-4">
@@ -1105,12 +1099,20 @@ export default function RecurringPage() {
                   setAmountKeyboardOpen(false);
                 }}
                 className="grid h-10 w-10 place-items-center rounded-full bg-slate-100 text-lg font-semibold text-slate-500"
+                disabled={isSaving}
                 aria-label="關閉"
               >
                 ×
               </button>
             </div>
 
+            {formMessage ? <p role="alert" className="mb-4 rounded-2xl bg-rose-50 p-3 text-sm text-rose-700">{formMessage}</p> : null}
+            {categoriesError || !categoriesReady ? (
+              <div role="alert" className="mb-4 rounded-2xl bg-rose-50 p-3 text-sm text-rose-700">
+                <p>{isLoadingCategories ? "分類載入中..." : categoriesError || "尚無可用分類"}</p>
+                <button type="button" disabled={isLoadingCategories || isSaving} onClick={() => { setFormMessage(""); void refreshCategories(); }} className="min-h-11 underline">重新載入分類</button>
+              </div>
+            ) : null}
             <div className="grid gap-3">
               <label className="grid gap-2">
                 <span className="text-sm font-medium text-slate-500">名稱</span>
@@ -1151,6 +1153,7 @@ export default function RecurringPage() {
                     }
                     className="h-12 rounded-[20px] bg-slate-50 px-4 text-base font-medium outline-none focus:bg-white focus:ring-2 focus:ring-slate-200"
                   >
+                    {!editingRule.category ? <option value="">請選擇分類</option> : null}
                     {visibleCategoryOptions.map(
                       (item, index) => (
                         <option key={`${item.id}-${index}`} value={item.name}>
@@ -1358,10 +1361,10 @@ export default function RecurringPage() {
               </button>
               <button
                 type="submit"
-                disabled={isSaving}
+                disabled={isSaving || !categoriesReady || Boolean(categoriesError)}
                 className="h-13 rounded-full bg-slate-950 text-base font-semibold text-white shadow-lg shadow-slate-300/80 disabled:bg-slate-300 disabled:shadow-none"
               >
-                {isSaving ? "儲存中..." : "儲存"}
+                {isSaving ? "儲存中..." : isLoadingCategories ? "分類載入中..." : "儲存"}
               </button>
             </div>
 

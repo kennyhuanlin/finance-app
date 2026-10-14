@@ -1,6 +1,6 @@
+import { requireFinanceAccess } from "../../../lib/apiAccess";
 import { NextResponse } from "next/server";
 import {
-  ensureWorksheetRowIds,
   GoogleSheetsApiError,
   readWorksheetsCachedWithRetry,
   type SupportedSheet,
@@ -15,9 +15,10 @@ const INVESTMENT_SHEETS = [
   "cash_ledger",
 ] as const satisfies readonly SupportedSheet[];
 
-export async function GET() {
+export async function GET(request: Request) {
+  const denied = requireFinanceAccess(request);
+  if (denied) return denied;
   try {
-    await ensureWorksheetRowIds("investment_trades", "trade");
     const data = await readWorksheetsCachedWithRetry([...INVESTMENT_SHEETS]);
     return NextResponse.json({ data, errors: {} });
   } catch (error) {

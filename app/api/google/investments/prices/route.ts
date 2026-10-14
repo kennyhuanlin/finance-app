@@ -1,3 +1,4 @@
+import { requireFinanceAccess } from "../../../../lib/apiAccess";
 import { NextResponse } from "next/server";
 import {
   GoogleSheetsApiError,
@@ -18,7 +19,9 @@ function errorResponse(error: unknown) {
   );
 }
 
-export async function GET() {
+export async function GET(request: Request) {
+  const denied = requireFinanceAccess(request);
+  if (denied) return denied;
   try {
     const data = await readWorksheetCachedWithRetry("investment_prices");
     return NextResponse.json({ data });
@@ -27,7 +30,9 @@ export async function GET() {
   }
 }
 
-export async function POST() {
+export async function POST(request: Request) {
+  const denied = requireFinanceAccess(request);
+  if (denied) return denied;
   if (priceUpdateRunning) {
     return NextResponse.json(
       {

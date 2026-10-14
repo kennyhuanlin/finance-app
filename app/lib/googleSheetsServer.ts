@@ -314,7 +314,6 @@ export async function ensureWorksheetExists(sheet: SupportedSheet) {
 }
 
 async function getValues(sheet: SupportedSheet) {
-  await ensureWorksheetExists(sheet);
   const { spreadsheetId } = getConfig();
   const range = encodeURIComponent(`${sheet}!A:Z`);
   const result = await googleRequest<{ values?: unknown[][] }>(
@@ -456,7 +455,6 @@ export async function readWorksheetsCachedWithRetry(
   const batchRequest =
     existing ??
     (async () => {
-      await Promise.all(missing.map(ensureWorksheetExists));
       const { spreadsheetId } = getConfig();
       const params = new URLSearchParams();
       missing.forEach((sheet) => params.append("ranges", `${sheet}!A:Z`));
@@ -647,18 +645,19 @@ export async function replaceWorksheetRows(
     return { ok: true, count: records.length, changed: false };
   }
 
-  const { spreadsheetId } = getConfig();
-  const range = encodeURIComponent(`${sheet}!A:Z`);
-  await googleWriteRequest(
-    `${SHEETS_API}/${encodeURIComponent(spreadsheetId)}/values/${range}:clear`,
-    { method: "POST", body: "{}" },
-  );
-  await writeValues(sheet, "A1", [
+  // Replace and clear obsolete tail cells in one request. A failed write must
+  // never leave a cleared worksheet behind before the new snapshot is written.
+  const width = Math.max(headers.length, ...currentValues.map((row) => row.length));
+  const nextValues: unknown[][] = [
     headers,
     ...records.map((record) =>
       headers.map((header) => normalizeCell(record[header])),
     ),
-  ]);
+  ];
+  const height = Math.max(currentValues.length, nextValues.length);
+  await writeValues(sheet, "A1", Array.from({ length: height }, (_, row) =>
+    Array.from({ length: width }, (_, column) => nextValues[row]?.[column] ?? ""),
+  ));
   invalidateWorksheetCache(sheet);
   return { ok: true, count: records.length, changed: true };
 }
