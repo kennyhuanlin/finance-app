@@ -388,7 +388,7 @@ function CategoriesIcon() {
 }
 
 export default function RecurringPage() {
-  const { categories, isLoadingCategories, categoriesError, ensureCategories } = useCategories();
+  const { categories, isLoadingCategories, categoriesReady, categoriesError, ensureCategories, refreshCategories } = useCategories();
   const saveInFlight = useRef(false);
   const [formMessage, setFormMessage] = useState("");
   const expenseCategories = categories.filter((item) => item.type === "expense");
@@ -486,6 +486,7 @@ export default function RecurringPage() {
       await updateRecurringRule(rule.id, {
         id: rule.id,
         enabled,
+        ...(enabled ? { nextRunDate: addPeriod(todayDateOnly(), rule.frequency, rule.startDate || todayDateOnly()) } : {}),
       });
       await loadRules();
     } catch (error) {
@@ -504,14 +505,15 @@ export default function RecurringPage() {
   async function openCreateForm() {
     setFormMessage("");
     let loaded;
-    try { loaded = await ensureCategories(10000); } catch {
-      setStatusMessage("分類載入失敗，請重新整理後再新增");
+    try { loaded = await ensureCategories(10000); } catch (error) {
+      setStatusMessage(`分類載入失敗：${error instanceof Error ? error.message : "請重試"}`);
       return;
     }
     const startDate = todayDateOnly();
     const type = activeTab === "income" ? "收入" : "支出";
     const categoryOptions =
       loaded.filter((category) => category.type === (activeTab === "income" ? "income" : "expense"));
+    if (!categoryOptions.length) { setStatusMessage("尚無可用分類，請先管理分類或重新載入分類"); return; }
 
     setEditingRule({
       ...emptyForm,
@@ -528,7 +530,11 @@ export default function RecurringPage() {
     setAmountKeyboardOpen(true);
   }
 
-  function openEditForm(rule: RecurringRule) {
+  async function openEditForm(rule: RecurringRule) {
+    try {
+      const loaded = await ensureCategories(10000);
+      if (!loaded.length) { setStatusMessage("尚無可用分類，請先管理分類或重新載入分類"); return; }
+    } catch (error) { setStatusMessage(`分類載入失敗：${error instanceof Error ? error.message : "請重試"}`); return; }
     setFormMessage("");
     setEditingRule({
       ...rule,
@@ -643,7 +649,7 @@ export default function RecurringPage() {
         status: "active",
         nextRunDate: current.manualNextRunDate
           ? current.nextRunDate
-          : addPeriod(todayDateOnly(), current.frequency),
+          : addPeriod(todayDateOnly(), current.frequency, current.startDate || todayDateOnly()),
       };
     });
   }
@@ -655,8 +661,8 @@ export default function RecurringPage() {
     const previousRule = rules.find((rule) => rule.id === editingRule.id);
     const validation = validateRecurringRule(editingRule, false, Boolean(previousRule && !previousRule.startDate));
     if (validation) { setFormMessage(validation); return; }
-    if (isLoadingCategories || categoriesError) {
-      setFormMessage("分類尚未載入完成，請稍後再試或重新整理"); return;
+    if (!categoriesReady || categoriesError) {
+      setFormMessage("分類尚未載入完成，請重新載入分類"); return;
     }
     const selectedCategory = categories.find((category) =>
       category.name === editingRule.category && category.type === (editingRule.type === "收入" ? "income" : "expense"));
@@ -805,9 +811,17 @@ export default function RecurringPage() {
         </header>
 
         {statusMessage ? (
-          <p className="rounded-[22px] bg-rose-50 px-4 py-3 text-sm font-medium text-rose-600">
+          <p role="alert" className="rounded-[22px] bg-rose-50 px-4 py-3 text-sm font-medium text-rose-600">
             {statusMessage}
           </p>
+        ) : null}
+        {isLoadingCategories ? <p role="status" className="text-sm text-slate-500">分類載入中...</p> : null}
+        {categoriesError || (!isLoadingCategories && !categoriesReady) ? (
+          <div role="alert" className="rounded-[22px] bg-rose-50 px-4 py-3 text-sm text-rose-700">
+            <p>{categoriesError ? `分類載入失敗：${categoriesError}` : "尚無可用分類"}</p>
+            <button type="button" disabled={isLoadingCategories} onClick={() => void refreshCategories()} className="mt-2 min-h-11 underline">重新載入分類</button>
+            <Link href="/categories" className="ml-4 underline">管理分類</Link>
+          </div>
         ) : null}
 
         <div className="grid grid-cols-2 rounded-full border border-white/70 bg-white/75 p-1 shadow-sm shadow-slate-200/80 backdrop-blur-xl">
@@ -1093,6 +1107,12 @@ export default function RecurringPage() {
             </div>
 
             {formMessage ? <p role="alert" className="mb-4 rounded-2xl bg-rose-50 p-3 text-sm text-rose-700">{formMessage}</p> : null}
+            {categoriesError || !categoriesReady ? (
+              <div role="alert" className="mb-4 rounded-2xl bg-rose-50 p-3 text-sm text-rose-700">
+                <p>{isLoadingCategories ? "分類載入中..." : categoriesError || "尚無可用分類"}</p>
+                <button type="button" disabled={isLoadingCategories || isSaving} onClick={() => void refreshCategories()} className="min-h-11 underline">重新載入分類</button>
+              </div>
+            ) : null}
             <div className="grid gap-3">
               <label className="grid gap-2">
                 <span className="text-sm font-medium text-slate-500">名稱</span>
@@ -1341,10 +1361,10 @@ export default function RecurringPage() {
               </button>
               <button
                 type="submit"
-                disabled={isSaving}
+                disabled={isSaving || !categoriesReady || Boolean(categoriesError)}
                 className="h-13 rounded-full bg-slate-950 text-base font-semibold text-white shadow-lg shadow-slate-300/80 disabled:bg-slate-300 disabled:shadow-none"
               >
-                {isSaving ? "儲存中..." : "儲存"}
+                {isSaving ? "儲存中..." : isLoadingCategories ? "分類載入中..." : "儲存"}
               </button>
             </div>
 
