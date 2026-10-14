@@ -165,3 +165,73 @@ test('explicit public origin accepts internal route URLs without allowing anothe
  assert.equal(requireFinanceAccess(request('', 'POST', {}, {origin:'https://attacker.invalid'})).status,403);
  delete process.env.FINANCE_APP_ORIGIN;
 });
+
+for(const day of [29,30,31]) for(const frequency of ['monthly','quarterly']) test(`Apps Script / Next parity: ${day} ${frequency}`,()=>{
+ const f=scriptFixture();const anchor=`2024-01-${day}`;let current=anchor;
+ for(let i=0;i<12;i++){const next=addPeriod(current,frequency,anchor);assert.equal(f.context.addPeriod(current,frequency,anchor),next);current=next;}
+});
+test('leap-year quarterly anchor and yearly recovery',()=>{
+ const f=scriptFixture();let current='2024-02-29';
+ for(let i=0;i<4;i++){current=addPeriod(current,'yearly','2024-02-29');assert.equal(f.context.addPeriod(i===0?'2024-02-29':`${2024+i}-02-28`,'yearly','2024-02-29'),current);}
+ assert.equal(current,'2028-02-29');
+});
+test('14 synthetic legacy shapes preserve schedule while editing ordinary fields and count',()=>{
+ for(let i=0;i<14;i++) {
+  const original={...validRule,id:`synthetic-${i}`,startDate:'',enabled:i%2===0,remainingCount:i%3===0?'4':'',lastRunDate:'2025-12-31'};
+  const edited={...original,name:`Edited ${i}`,category:'Fixture other',amount:222,note:'Synthetic note'};
+  assert.equal(validateRecurringRule(edited,false,true),'');
+  for(const key of ['startDate','nextRunDate','lastRunDate','remainingCount','enabled'])assert.equal(edited[key],original[key]);
+  assert.equal(validateRecurringRule({...edited,remainingCount:'3'},false,true),'');
+ }
+});
+test('worksheet replacement uses one padded write and no clear; failed write keeps previous snapshot',async()=>{
+ const server=require('../app/lib/googleSheetsServer.ts');let calls=[];
+ const headers=Array.from(server.sheetHeaders.investment_positions);
+ const record={id:'position-fixture',market:'TW',symbol:'FIX',quantity:1};
+ const old=[headers,headers.map(h=>h==='id'?'old-1':h==='quantity'?2:''),headers.map(h=>h==='id'?'old-2':'')];
+ const snapshot=JSON.stringify(old);let rejectWrite=true;
+ server.invalidateWorksheetCache('investment_positions');
+ global.fetch=async(url,options={})=>{
+  url=String(url);calls.push({url,...options});
+  if(url==='https://oauth2.googleapis.com/token') return Response.json({access_token:'fixture-token',expires_in:3600});
+  if(url.includes('?fields=sheets.properties'))return Response.json({sheets:[{properties:{title:'investment_positions',sheetId:1}}]});
+  if(!options.method||options.method==='GET')return Response.json({values:old});
+  if(options.method==='PUT'){if(rejectWrite)return Response.json({error:{message:'synthetic denied'}},{status:403});return Response.json({updatedRows:3});}
+  throw new Error('Unexpected mutation: '+url);
+ };
+ await assert.rejects(server.replaceWorksheetRows('investment_positions',[record]));
+ assert.equal(JSON.stringify(old),snapshot);assert.ok(calls.every(c=>!c.url.includes(':clear')));
+ rejectWrite=false;calls=[];await server.replaceWorksheetRows('investment_positions',[record]);
+ const writes=calls.filter(c=>c.method==='PUT');assert.equal(writes.length,1);
+ const values=JSON.parse(writes[0].body).values;assert.equal(values.length,3);assert.ok(values[2].every(v=>v===''));
+ global.fetch=async()=>{throw new Error('Unmocked network access prohibited');};
+});
+
+test('investment sync refuses missing/duplicate source IDs and missing currency accounts before writes',async()=>{
+ const server=require('../app/lib/googleSheetsServer.ts');const sync=require('../app/lib/investmentSyncServer.ts');
+ const sheets=['investment_trades','cash_accounts','cash_ledger','fx_records','dividend_records'];
+ let fixture,calls=[];
+ const configure=()=>{fixture=Object.fromEntries(sheets.map(name=>[name,[Array.from(server.sheetHeaders[name])]]));server.invalidateWorksheetCache(...sheets);calls=[];};
+ global.fetch=async(url,options={})=>{url=String(url);calls.push({url,method:options.method||'GET'});if(url.includes('oauth2.googleapis.com'))return Response.json({access_token:'fixture-token',expires_in:3600});assert.equal(options.method||'GET','GET','unsafe sync must not write');const sheet=decodeURIComponent(url.split('/values/')[1].split('?')[0]).split('!')[0];return Response.json({values:fixture[sheet]});};
+ configure();const tx={id:'',date:'2026-01-01',market:'TW',symbol:'FIX',side:'buy',quantity:1,price:10,currency:'TWD'};fixture.investment_trades.push(fixture.investment_trades[0].map(h=>tx[h]??''));
+ await assert.rejects(sync.refreshInvestmentPositions(),/missing or duplicate IDs/);await assert.rejects(sync.refreshCashAccounts(),/missing or duplicate IDs/);
+ configure();tx.id='fixture-trade';const row=fixture.investment_trades[0].map(h=>tx[h]??'');fixture.investment_trades.push(row,row);await assert.rejects(sync.refreshInvestmentPositions(),/missing or duplicate IDs/);
+ configure();fixture.investment_trades.push(fixture.investment_trades[0].map(h=>tx[h]??''));await assert.rejects(sync.refreshCashAccounts(),/Cash accounts missing/);
+ assert.ok(calls.every(call=>call.method==='GET'));global.fetch=async()=>{throw new Error('Unmocked network access prohibited');};
+});
+
+test('Apps Script token API read is side-effect free and shares scheduler lock',()=>{
+ const f=scriptFixture();let validToken='fixture-token-012345678901234567890';let locks=0;
+ f.context.PropertiesService={getScriptProperties:()=>({getProperty:()=>validToken})};
+ f.context.ContentService={MimeType:{JSON:'JSON'},createTextOutput:text=>({setMimeType:()=>text})};
+ f.context.LockService={getScriptLock:()=>({tryLock:()=>{locks++;return true;},releaseLock:()=>{}})};
+ const get=f.context.SpreadsheetApp.getActiveSpreadsheet().getSheetByName;
+ f.context.SpreadsheetApp.getActiveSpreadsheet=()=>({getSheetByName:name=>get(name)});
+ vm.runInContext(fs.readFileSync('apps-script/sheetsApi.js','utf8'),f.context);
+ const post=body=>JSON.parse(f.context.doPost({postData:{contents:JSON.stringify(body)}}));
+ assert.match(post({sheet:'recurring_rules',action:'read',token:'wrong'}).error,/Unauthorized/);assert.equal(f.writes(),0);
+ const rows=post({sheet:'recurring_rules',action:'read',token:validToken});assert.equal(rows.length,1);assert.equal(locks,0);assert.equal(f.writes(),0);
+ assert.ok(JSON.parse(f.context.doGet()).error);
+ assert.equal(post({sheet:'recurring_rules',action:'update',token:validToken,id:'fixture-rule',enabled:false}).ok,true);assert.equal(locks,1);
+ f.context.recurringTransactions();assert.equal(locks,2);assert.equal(f.rows.transactions.length,1);
+});
