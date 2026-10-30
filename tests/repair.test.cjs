@@ -14,6 +14,7 @@ require.extensions['.ts'] = function(module, filename) {
 // Every external request is a fixture or a hard failure. No real credentials/data.
 global.fetch = async () => { throw new Error('Unmocked network access prohibited'); };
 const { addPeriod, validateRecurringRule } = require('../app/lib/recurringDates.ts');
+const { parseUsdTwdQuote, convertUsdToTwd } = require('../app/lib/investments.ts');
 const { requireFinanceAccess } = require('../app/lib/apiAccess.ts');
 const client = require('../app/lib/googleSheets.ts');
 const password = 'fixture-only-012345678901234567890123456789';
@@ -23,6 +24,27 @@ const authorization = `Basic ${Buffer.from(`fixture-owner:${password}`).toString
 function request(path='/api/google/recurring', method='GET', body, headers={}) {
   return new Request(`https://fixture.invalid${path}`, { method, headers: {authorization, ...(method==='GET' ? {} : {'content-type':'application/json', origin:'https://fixture.invalid'}), ...headers}, ...(body===undefined ? {} : {body:JSON.stringify(body)}) });
 }
+test('CBC USD/TWD reference quote converts USD without changing original currency',()=>{
+ const quote=parseUsdTwdQuote({base:'USD',quote:'TWD',date:'2026-10-29',rate:32.125});
+ assert.deepEqual(quote,{date:'2026-10-29',rate:32.125});
+ assert.equal(convertUsdToTwd(1000,quote.rate),32125);
+ assert.equal(convertUsdToTwd(0,quote.rate),0);
+ assert.equal(convertUsdToTwd(-100,quote.rate),-3212.5);
+});
+test('invalid or missing quote never invents a 1:1 TWD value',()=>{
+ for(const payload of [null,[],{}, {base:'TWD',quote:'USD',date:'2026-10-29',rate:32},
+  {base:'USD',quote:'TWD',date:'2026-10-29',rate:'32.1'},
+  {base:'USD',quote:'TWD',date:'2026-10-29',rate:0},
+  {base:'USD',quote:'TWD',date:'2026-10-29',rate:Infinity},
+  {base:'USD',quote:'TWD',date:'2026-02-30',rate:32}]) {
+   assert.equal(parseUsdTwdQuote(payload),null);
+ }
+ assert.equal(convertUsdToTwd(100,null),null);
+ assert.equal(convertUsdToTwd(100,0),null);
+ assert.equal(convertUsdToTwd(Number.NaN,32),null);
+ assert.equal(convertUsdToTwd(null,32),null);
+});
+
 const validRule={id:'fixture-rule', name:'Synthetic expense', category:'Fixture category', type:'支出', amount:125,frequency:'monthly',startDate:'2026-01-31',nextRunDate:'2026-02-28',remainingCount:'',enabled:true};
 for(const [date,frequency,anchor,expected] of [
  ['2026-01-31','monthly',undefined,'2026-02-28'],['2026-02-28','monthly','2026-01-31','2026-03-31'],
