@@ -627,7 +627,7 @@ export default function Home() {
               <div>
                 <p className="text-sm font-medium text-slate-500">支出分類</p>
                 <h2 className="mt-1 text-xl font-semibold tracking-normal">
-                  本月花費分布
+                  本月花費分布（台幣）
                 </h2>
               </div>
               <Suspense fallback={null}>
@@ -642,7 +642,7 @@ export default function Home() {
               >
                 <div className="grid h-28 w-28 place-items-center rounded-full bg-white shadow-inner shadow-slate-200 sm:h-32 sm:w-32">
                   <div className="text-center">
-                    <p className="text-xs font-medium text-slate-400">總支出</p>
+                    <p className="text-xs font-medium text-slate-400">台幣支出</p>
                     <p className="mt-1 text-lg font-semibold sm:text-xl">
                       {formatMoney(totalCategoryExpense)}
                     </p>
@@ -689,6 +689,7 @@ export default function Home() {
                     <div className="flex shrink-0 items-center gap-2">
                       <span className="text-sm font-semibold text-slate-950">
                         {formatMoney(item.amount)}
+                        {item.usdAmount !== 0 ? <span className="mt-1 block text-xs font-normal text-slate-500">{formatFinanceMoney(item.usdAmount, "USD")}（美元另計）</span> : null}
                       </span>
                       <span className="text-lg font-semibold text-slate-300">
                         ›
@@ -755,7 +756,7 @@ export default function Home() {
                       }`}
                     >
                       {isIncome ? "+" : "-"}
-                      {formatMoney(item.amount)}
+                      {formatFinanceMoney(item.amount, normalizeFinanceCurrency(item.currency))}
                     </p>
                   </div>
                 );
