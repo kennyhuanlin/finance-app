@@ -123,8 +123,13 @@ async function main() {
   const retryForm=retryPage.getByRole('dialog',{name:'固定收支表單'});await retryForm.waitFor();
   assert.equal(await retryForm.getByRole('combobox',{name:/分類/}).inputValue(),'測試支出');
   await recovery.close();
-  const anonymous=await browser.newContext();const denied=await anonymous.request.get('http://127.0.0.1:45817/api/google/recurring');assert.equal(denied.status(),401);await anonymous.close();
-  console.log('Browser PASS: response-gated category race, 14 synthetic legacy edits preserve schedule state, category error/retry, recurring delete, transaction HTTP and mobile UI CRUD, visible server failure, pause/resume without catch-up; legacy edit without start-date backfill, frequency change preserves next date, delayed categories, visible validation, server error preserves input, expense/income create, quarter/month end, anonymous API denied.');
+  const anonymous=await browser.newContext();
+  const publicRead=await anonymous.request.get('http://127.0.0.1:45817/api/google/recurring');
+  assert.equal(publicRead.status(),200);
+  const blocked=await anonymous.request.post('http://127.0.0.1:45817/api/google/recurring',{headers:{origin:'https://attacker.invalid','content-type':'application/json'},data:{id:'fixture-no-write'}});
+  assert.equal(blocked.status(),403);
+  await anonymous.close();
+  console.log('Browser PASS: response-gated category race, 14 synthetic legacy edits preserve schedule state, category error/retry, recurring delete, transaction HTTP and mobile UI CRUD, visible server failure, pause/resume without catch-up; legacy edit without start-date backfill, frequency change preserves next date, delayed categories, visible validation, server error preserves input, expense/income create, quarter/month end, anonymous API readable; cross-origin mutation denied.');
  } catch(error) {
   if(page){fs.mkdirSync("test-results",{recursive:true});await page.screenshot({path:"test-results/browser-failure.png",fullPage:true}).catch(()=>{});}
   if(page) console.error("FIXTURE_DOM",await page.locator("body").innerText());
