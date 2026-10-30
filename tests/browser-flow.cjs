@@ -123,13 +123,38 @@ async function main() {
   const retryForm=retryPage.getByRole('dialog',{name:'固定收支表單'});await retryForm.waitFor();
   assert.equal(await retryForm.getByRole('combobox',{name:/分類/}).inputValue(),'測試支出');
   await recovery.close();
+  // Self-contained synthetic USD/TWD valuation (never reaches real Sheets).
+  await page.route('https://api.frankfurter.dev/v2/providers/cbc/rate/usd/twd',route=>route.fulfill({
+    status:200,contentType:'application/json',
+    body:JSON.stringify({base:'USD',quote:'TWD',date:'2026-10-29',rate:31.5}),
+  }));
+  await page.route('**/api/google/investments',route=>route.fulfill({
+    status:200,contentType:'application/json',body:JSON.stringify({data:{
+      investment_trades:[],
+      investment_positions:[{market:'US',ticker:'TEST',name:'Synthetic US holding',quantity:2,averageCost:100,totalCost:200,currency:'USD'}],
+      fx_records:[],dividend_records:[],
+      cash_accounts:[{id:'synthetic-usd',name:'Synthetic USD account',currency:'USD',balance:50}],
+      cash_ledger:[],
+    },errors:{}}),
+  }));
+  await page.route('**/api/google/investments/prices',route=>route.fulfill({
+    status:200,contentType:'application/json',body:JSON.stringify({data:[
+      {market:'US',symbol:'TEST',name:'Synthetic US holding',price:150,currency:'USD',price_date:'2026-10-29',updatedAt:'2026-10-29T00:00:00Z'},
+    ]}),
+  }));
+  await page.goto('http://127.0.0.1:45817/investments');
+  await page.getByText('美股投資',{exact:true}).waitFor();
+  await page.getByText('1 USD = 31.5000 TWD',{exact:false}).waitFor();
+  await page.getByText('約 NT$6,300',{exact:true}).first().waitFor();
+  await page.getByText('約 NT$9,450',{exact:true}).first().waitFor();
+  await page.getByText('約 NT$1,575',{exact:true}).first().waitFor();
   const anonymous=await browser.newContext();
   const publicRead=await anonymous.request.get('http://127.0.0.1:45817/api/google/recurring');
   assert.equal(publicRead.status(),200);
   const blocked=await anonymous.request.post('http://127.0.0.1:45817/api/google/recurring',{headers:{origin:'https://attacker.invalid','content-type':'application/json'},data:{id:'fixture-no-write'}});
   assert.equal(blocked.status(),403);
   await anonymous.close();
-  console.log('Browser PASS: response-gated category race, 14 synthetic legacy edits preserve schedule state, category error/retry, recurring delete, transaction HTTP and mobile UI CRUD, visible server failure, pause/resume without catch-up; legacy edit without start-date backfill, frequency change preserves next date, delayed categories, visible validation, server error preserves input, expense/income create, quarter/month end, anonymous API readable; cross-origin mutation denied.');
+  console.log('Browser PASS: response-gated category race, 14 synthetic legacy edits preserve schedule state, category error/retry, recurring delete, transaction HTTP and mobile UI CRUD, visible server failure, pause/resume without catch-up; legacy edit without start-date backfill, frequency change preserves next date, delayed categories, visible validation, server error preserves input, expense/income create, quarter/month end, anonymous API readable; cross-origin mutation denied. Synthetic investment USD/TWD reference labels confirmed.');
  } catch(error) {
   if(page){fs.mkdirSync("test-results",{recursive:true});await page.screenshot({path:"test-results/browser-failure.png",fullPage:true}).catch(()=>{});}
   if(page) console.error("FIXTURE_DOM",await page.locator("body").innerText());

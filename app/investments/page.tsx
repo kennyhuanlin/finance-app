@@ -7,6 +7,7 @@ import {
   calculatePositions,
   calculatePositionPnL,
   calculateTradeTotal,
+  convertUsdToTwd,
   type CashAccount,
   type CashLedger,
   type Currency,
@@ -29,6 +30,8 @@ import {
   type Market,
   normalizeSymbol,
   normalizeInvestmentTradeType,
+  parseUsdTwdQuote,
+  type UsdTwdQuote,
   type TradeSide,
 } from "../lib/investments";
 import {
@@ -95,6 +98,13 @@ type AdjustmentForm = {
 };
 
 const nowIso = () => new Date().toISOString();
+const usdTwdQuoteUrl = "https://api.frankfurter.dev/v2/providers/cbc/rate/usd/twd";
+
+function usdTwdHint(amount: number | null, currency: Currency, rate: number | null): string | undefined {
+  if (currency !== "USD" || amount === null) return undefined;
+  const twd = convertUsdToTwd(amount, rate);
+  return twd === null ? "匯率暫無資料" : "約 " + formatInvestmentMoney(twd, "TWD");
+}
 const emptyTrade = (): TradeForm => ({
   id: "", date: localDateKey(), market: "TW", symbol: "", ticker: "", name: "", side: "buy",
   type: "buy", quantity: "", unit: "lot", price: "", fee: "0", tax: "0", currency: "TWD",
@@ -233,6 +243,8 @@ export default function InvestmentsPage() {
   const [isSyncing, setIsSyncing] = useState(false);
   const [isUpdatingPrices, setIsUpdatingPrices] = useState(false);
   const [fxRateDisplay, setFxRateDisplay] = useState("");
+  const [remoteUsdTwd, setRemoteUsdTwd] = useState<UsdTwdQuote | null>(null);
+  const [usdTwdRatePending, setUsdTwdRatePending] = useState(true);
   const [resourceErrors, setResourceErrors] = useState<
     Partial<Record<InvestmentResource, ResourceErrorInfo>>
   >({});
@@ -275,6 +287,33 @@ export default function InvestmentsPage() {
       );
   }, []);
 
+  // Read-only daily Taiwan CBC reference rate; no account data is transmitted.
+  useEffect(() => {
+    const controller = new AbortController();
+    let active = true;
+    const timeout = window.setTimeout(() => controller.abort(), 8000);
+    void fetch(usdTwdQuoteUrl, { signal: controller.signal })
+      .then((response) => {
+        if (!response.ok) throw new Error("USD/TWD quote unavailable");
+        return response.json();
+      })
+      .then((payload: unknown) => {
+        if (active) setRemoteUsdTwd(parseUsdTwdQuote(payload));
+      })
+      .catch(() => {
+        // Offline or unavailable provider: fall back to a labeled FX record.
+      })
+      .finally(() => {
+        window.clearTimeout(timeout);
+        if (active) setUsdTwdRatePending(false);
+      });
+    return () => {
+      active = false;
+      window.clearTimeout(timeout);
+      controller.abort();
+    };
+  }, []);
+
   const calculatedPositions = useMemo(() => calculatePositions(trades), [trades]);
   const positions = positionSnapshots.length ? positionSnapshots : calculatedPositions;
   const portfolioPnLs = useMemo(
@@ -290,20 +329,34 @@ export default function InvestmentsPage() {
   const dividendTwd = dividends.reduce((sum, item) => sum + item.amountTwd, 0);
   const twdCash = cashAccounts.filter((item) => item.currency === "TWD").reduce((sum, item) => sum + item.balance, 0);
   const usdCash = cashAccounts.filter((item) => item.currency === "USD").reduce((sum, item) => sum + item.balance, 0);
-  const latestUsdTwdRate = fxRecords
+  const lastRecordedRate = fxRecords
     .slice()
     .sort((a, b) => `${b.date}|${b.updatedAt}`.localeCompare(`${a.date}|${a.updatedAt}`))
-    .map((item) =>
-      getExchangeRateDisplay(
-        item.fromCurrency,
-        item.toCurrency,
-        item.exchangeRate ||
-          item.toAmount / Math.max(item.fromAmount, 1),
+    .map((item) => ({
+      date: item.date,
+      rate: getExchangeRateDisplay(
+        item.fromCurrency, item.toCurrency,
+        item.exchangeRate || item.toAmount / Math.max(item.fromAmount, 1),
       ),
-    )
-    .find((rate) => rate > 0) ?? 1;
-  const investmentCostTwd = twCost + usCost * latestUsdTwdRate;
-  const estimatedAssets = twdCash + usdCash * latestUsdTwdRate + investmentCostTwd;
+    }))
+    .find((item) => Number.isFinite(item.rate) && item.rate > 0) ?? null;
+  const usdTwdRate = remoteUsdTwd?.rate ?? lastRecordedRate?.rate ?? null;
+  const rateSource = remoteUsdTwd
+    ? "台灣央行收盤參考（" + remoteUsdTwd.date + "）"
+    : lastRecordedRate
+      ? "最近換匯紀錄（" + (lastRecordedRate.date || "日期不明") + "），非最新市場匯率"
+      : usdTwdRatePending ? "正在取得參考匯率" : "目前沒有可用匯率";
+  const usdCostTwd = convertUsdToTwd(usCost, usdTwdRate);
+  const usdCashTwd = convertUsdToTwd(usdCash, usdTwdRate);
+  const investmentCostTwd = usCost !== 0 && usdCostTwd === null ? null : twCost + (usdCostTwd ?? 0);
+  const estimatedAssets = (usCost !== 0 || usdCash !== 0) && usdTwdRate === null
+    ? null
+    : twdCash + twCost + (usdCostTwd ?? 0) + (usdCashTwd ?? 0);
+  const tradeDraftTotal = calculateTradeTotal(
+    tradeForm.market, tradeForm.side, number(tradeForm.quantity),
+    number(tradeForm.price), number(tradeForm.fee), number(tradeForm.tax),
+    tradeForm.unit, tradeForm.type,
+  );
 
   function openTrade(item?: InvestmentTrade) {
     setTradeForm(item ? { ...item, quantity: String(item.quantity), price: String(item.price), fee: String(item.fee), tax: String(item.tax), exchangeRate: String(item.exchangeRate) } : emptyTrade());
@@ -799,9 +852,9 @@ export default function InvestmentsPage() {
                     {summary.currency === "TWD" ? "台股投資" : "美股投資"}
                   </h3>
                   <dl className="mt-4 grid grid-cols-2 gap-4">
-                    <PnLMetric label="總投入成本" value={formatInvestmentMoney(summary.totalCost, summary.currency, 2)} />
-                    <PnLMetric label="目前市值" value={summary.marketValue === null ? "尚未取得價格" : formatInvestmentMoney(summary.marketValue, summary.currency, 2)} />
-                    <PnLMetric label="未實現損益" value={formatSignedMoney(summary.unrealizedGain, summary.currency)} tone={pnlTone(summary.unrealizedGain)} />
+                    <PnLMetric label="總投入成本" value={formatInvestmentMoney(summary.totalCost, summary.currency, 2)} secondaryValue={usdTwdHint(summary.totalCost, summary.currency, usdTwdRate)} />
+                    <PnLMetric label="目前市值" value={summary.marketValue === null ? "尚未取得價格" : formatInvestmentMoney(summary.marketValue, summary.currency, 2)} secondaryValue={usdTwdHint(summary.marketValue, summary.currency, usdTwdRate)} />
+                    <PnLMetric label="未實現損益" value={formatSignedMoney(summary.unrealizedGain, summary.currency)} tone={pnlTone(summary.unrealizedGain)} secondaryValue={usdTwdHint(summary.unrealizedGain, summary.currency, usdTwdRate)} />
                     <PnLMetric label="報酬率" value={formatReturnRate(summary.returnRate)} tone={pnlTone(summary.returnRate)} />
                   </dl>
                 </article>
@@ -813,22 +866,26 @@ export default function InvestmentsPage() {
             <h2 className="text-xl font-semibold">持股損益</h2>
             <div className="mt-3 grid gap-3 lg:grid-cols-2">
               {positionPnLs.length
-                ? positionPnLs.map((item) => <PositionPnLCard key={`${item.position.market}-${item.position.ticker}`} item={item} />)
+                ? positionPnLs.map((item) => <PositionPnLCard key={`${item.position.market}-${item.position.ticker}`} item={item} usdTwdRate={usdTwdRate} />)
                 : <Empty />}
             </div>
           </section>
 
           <div className="grid grid-cols-2 gap-3 lg:grid-cols-3">
           {[
-            ["台幣現金", formatInvestmentMoney(twdCash, "TWD")],
-            ["美元現金", formatInvestmentMoney(usdCash, "USD")],
-            ["台股成本", formatInvestmentMoney(twCost, "TWD")],
-            ["美股成本", formatInvestmentMoney(usCost, "USD")],
-            ["投資總成本", formatInvestmentMoney(investmentCostTwd, "TWD")],
-            ["累計股息", formatInvestmentMoney(dividendTwd, "TWD")],
-            ["投資帳戶總資產估算", formatInvestmentMoney(estimatedAssets, "TWD")],
-          ].map(([label, value]) => <article key={label} className={card}><p className="text-xs font-medium text-slate-500">{label}</p><p className="mt-3 text-xl font-semibold">{value}</p></article>)}
-          <p className="col-span-2 px-1 text-xs text-slate-400 lg:col-span-3">美元換算匯率：1 USD = {latestUsdTwdRate.toFixed(4)} TWD；股票資產暫以持有成本估算。</p>
+            { label: "台幣現金", value: formatInvestmentMoney(twdCash, "TWD") },
+            { label: "美元現金", value: formatInvestmentMoney(usdCash, "USD"), secondaryValue: usdTwdHint(usdCash, "USD", usdTwdRate) },
+            { label: "台股成本", value: formatInvestmentMoney(twCost, "TWD") },
+            { label: "美股成本", value: formatInvestmentMoney(usCost, "USD"), secondaryValue: usdTwdHint(usCost, "USD", usdTwdRate) },
+            { label: "投資總成本", value: investmentCostTwd === null ? "匯率暫無資料" : formatInvestmentMoney(investmentCostTwd, "TWD") },
+            { label: "累計股息", value: formatInvestmentMoney(dividendTwd, "TWD") },
+            { label: "投資帳戶總資產估算", value: estimatedAssets === null ? "匯率暫無資料" : formatInvestmentMoney(estimatedAssets, "TWD") },
+          ].map(({label, value, secondaryValue}) => <article key={label} className={card}><p className="text-xs font-medium text-slate-500">{label}</p><p className="mt-3 text-xl font-semibold">{value}</p>{secondaryValue ? <p className="mt-1 text-xs text-slate-500">{secondaryValue}</p> : null}</article>)}
+          <p className="col-span-2 px-1 text-xs text-slate-400 lg:col-span-3">
+            美元換算匯率：{usdTwdRate === null ? "暫無資料" : "1 USD = " + usdTwdRate.toFixed(4) + " TWD"} · {rateSource}。
+            {remoteUsdTwd ? <> <a href="https://frankfurter.dev/providers/cbc/" target="_blank" rel="noopener noreferrer" className="underline">匯率來源</a>。</> : null}
+            台幣為參考估值，非實際成交匯率；股票總資產暫以持有成本估算。
+          </p>
           </div>
         </div> : null}
 
@@ -851,12 +908,12 @@ export default function InvestmentsPage() {
               : item.market === "TW"
                 ? ` · 成交價：${formatInvestmentMoney(unitPrice, item.currency)} · 原幣成交金額：${formatInvestmentMoney(totalAmount, item.currency)}`
                 : ` · 每股均價：${formatInvestmentMoney(unitPrice, item.currency)} · 原幣成交金額：${formatInvestmentMoney(totalAmount, item.currency)}`;
-            return <RecordRow key={item.id} title={`${item.symbol} ${item.name}`} meta={`${item.date} · ${item.market} · ${formatInvestmentTradeType(item.type,item.side)} · ${item.quantity} ${isStockDividendTrade(item) || item.unit === "share" || item.unit === "股" ? "股" : item.market === "TW" ? "張" : "股"}${priceDetails}`} amount={isStockDividendTrade(item) ? "不影響現金" : `${item.side === "buy" ? "-" : "+"}${formatInvestmentMoney(netAmount, item.currency)}`} onEdit={() => openTrade(item)} onDelete={() => remove("trade", item.id)} />;
+            return <RecordRow key={item.id} title={`${item.symbol} ${item.name}`} meta={`${item.date} · ${item.market} · ${formatInvestmentTradeType(item.type,item.side)} · ${item.quantity} ${isStockDividendTrade(item) || item.unit === "share" || item.unit === "股" ? "股" : item.market === "TW" ? "張" : "股"}${priceDetails}`} amount={isStockDividendTrade(item) ? "不影響現金" : `${item.side === "buy" ? "-" : "+"}${formatInvestmentMoney(netAmount, item.currency)}`} amountHint={isStockDividendTrade(item) ? undefined : usdTwdHint(item.side === "buy" ? -netAmount : netAmount, item.currency, usdTwdRate)} onEdit={() => openTrade(item)} onDelete={() => remove("trade", item.id)} />;
           })}
         </RecordSection> : null}
 
         {tab === "positions" ? <section className={card}><h2 className="text-xl font-semibold">庫存持股</h2><ResourceError error={resourceErrors.investment_positions}/><div className="mt-3 divide-y divide-slate-100">
-          {positionPnLs.length ? positionPnLs.map((item) => <PositionPnLCard key={`${item.position.market}-${item.position.ticker}`} item={item} compact />) : <Empty />}
+          {positionPnLs.length ? positionPnLs.map((item) => <PositionPnLCard key={`${item.position.market}-${item.position.ticker}`} item={item} usdTwdRate={usdTwdRate} compact />) : <Empty />}
         </div></section> : null}
 
         {tab === "cash" ? <section className="grid gap-4">
@@ -870,7 +927,7 @@ export default function InvestmentsPage() {
           <div className={card}>
             <div className="flex items-center justify-between gap-3"><h2 className="text-xl font-semibold">現金帳戶</h2><button onClick={() => openAccount()} className="rounded-full bg-slate-950 px-4 py-2 text-sm font-semibold text-white">＋ 帳戶</button></div>
             <div className="mt-3 grid gap-3 sm:grid-cols-2">
-              {cashAccounts.length ? cashAccounts.map((item) => <article key={item.id} className="rounded-2xl bg-slate-50 p-4"><button onClick={() => openAdjustment(item)} className="w-full text-left"><p className="text-sm font-medium text-slate-500">{item.name}</p><p className="mt-2 text-xl font-semibold">{formatInvestmentMoney(item.balance, item.currency)}</p><p className="mt-2 text-xs text-indigo-500">調整餘額</p></button><div className="mt-3 flex justify-end gap-2 border-t border-slate-200/70 pt-3"><button type="button" onClick={() => openAccount(item.currency,item)} className="flex items-center gap-1 rounded-full bg-white px-3 py-1.5 text-xs font-semibold text-slate-600 shadow-sm"><Pencil size={14} strokeWidth={2.2}/> 編輯</button><button type="button" onClick={() => remove("account",item.id)} className="flex items-center gap-1 rounded-full bg-rose-50 px-3 py-1.5 text-xs font-semibold text-rose-600"><Trash2 size={14} strokeWidth={2.2}/> 刪除</button></div></article>) : <Empty />}
+              {cashAccounts.length ? cashAccounts.map((item) => <article key={item.id} className="rounded-2xl bg-slate-50 p-4"><button onClick={() => openAdjustment(item)} className="w-full text-left"><p className="text-sm font-medium text-slate-500">{item.name}</p><p className="mt-2 text-xl font-semibold">{formatInvestmentMoney(item.balance, item.currency)}</p>{usdTwdHint(item.balance, item.currency, usdTwdRate) ? <p className="mt-1 text-xs text-slate-500">{usdTwdHint(item.balance, item.currency, usdTwdRate)}</p> : null}<p className="mt-2 text-xs text-indigo-500">調整餘額</p></button><div className="mt-3 flex justify-end gap-2 border-t border-slate-200/70 pt-3"><button type="button" onClick={() => openAccount(item.currency,item)} className="flex items-center gap-1 rounded-full bg-white px-3 py-1.5 text-xs font-semibold text-slate-600 shadow-sm"><Pencil size={14} strokeWidth={2.2}/> 編輯</button><button type="button" onClick={() => remove("account",item.id)} className="flex items-center gap-1 rounded-full bg-rose-50 px-3 py-1.5 text-xs font-semibold text-rose-600"><Trash2 size={14} strokeWidth={2.2}/> 刪除</button></div></article>) : <Empty />}
             </div>
           </div>
           <div className={card}>
@@ -878,7 +935,7 @@ export default function InvestmentsPage() {
             <div className="mt-3 divide-y divide-slate-100">
               {cashLedger.length ? cashLedger.slice().sort((a,b) => `${b.date}|${b.createdAt}`.localeCompare(`${a.date}|${a.createdAt}`)).map((item) => {
                 const isOut = ["withdraw","fx_out","trade_buy"].includes(item.type);
-                return <div key={item.id} className="flex items-center justify-between gap-3 py-4"><div className="min-w-0"><p className="truncate font-semibold">{item.accountName || item.currency}</p><p className="mt-1 truncate text-xs text-slate-400">{item.date} · {cashTypeLabel(item.type)} · {item.note}</p></div><p className={`shrink-0 text-sm font-semibold ${isOut ? "text-rose-600" : "text-emerald-600"}`}>{isOut ? "-" : item.amount >= 0 ? "+" : ""}{formatInvestmentMoney(item.amount, item.currency)}</p></div>;
+                return <div key={item.id} className="flex items-center justify-between gap-3 py-4"><div className="min-w-0"><p className="truncate font-semibold">{item.accountName || item.currency}</p><p className="mt-1 truncate text-xs text-slate-400">{item.date} · {cashTypeLabel(item.type)} · {item.note}</p></div><p className={`shrink-0 text-sm font-semibold ${isOut ? "text-rose-600" : "text-emerald-600"}`}>{isOut ? "-" : item.amount >= 0 ? "+" : ""}{formatInvestmentMoney(item.amount, item.currency)}{usdTwdHint(item.amount, item.currency, usdTwdRate) ? <span className="ml-2 text-xs font-normal text-slate-500">{usdTwdHint(item.amount, item.currency, usdTwdRate)}</span> : null}</p></div>;
               }) : <Empty />}
             </div>
           </div>
@@ -910,7 +967,7 @@ export default function InvestmentsPage() {
             <Field label="幣別"><select value={tradeForm.currency} onChange={(e) => setTradeForm({...tradeForm,currency:e.target.value as Currency})}><option value="TWD">TWD</option><option value="USD">USD</option></select></Field>
             {(["quantity","price","fee","tax","exchangeRate"] as const).map((key) => <Field key={key} label={{quantity:tradeForm.market === "TW" ? "張數" : "股數",price:tradeForm.market === "TW" ? "每股成交價" : "成交總金額",fee:"手續費",tax:"交易稅",exchangeRate:"匯率"}[key]}><input required step="any" min="0" type="number" value={tradeForm[key]} onChange={(e) => setTradeForm({...tradeForm,[key]:e.target.value})}/></Field>)}
             <Field label="備註" wide><input value={tradeForm.note} onChange={(e) => setTradeForm({...tradeForm,note:e.target.value})}/></Field>
-            <p className="col-span-2 rounded-2xl bg-indigo-50 p-3 text-sm font-semibold text-indigo-700">總額：{formatInvestmentMoney(calculateTradeTotal(tradeForm.market,tradeForm.side,number(tradeForm.quantity),number(tradeForm.price),number(tradeForm.fee),number(tradeForm.tax),tradeForm.unit,tradeForm.type),tradeForm.currency)}</p>
+            <p className="col-span-2 rounded-2xl bg-indigo-50 p-3 text-sm font-semibold text-indigo-700">總額：{formatInvestmentMoney(tradeDraftTotal,tradeForm.currency)}{usdTwdHint(tradeDraftTotal, tradeForm.currency, usdTwdRate) ? <span className="ml-2 text-xs font-normal text-indigo-600">（{usdTwdHint(tradeDraftTotal, tradeForm.currency, usdTwdRate)}，參考）</span> : null}</p>
           </>}
           <Submit saving={saving}/>
         </form> : null}
@@ -996,21 +1053,25 @@ function formatPositionQuantity(position: InvestmentPosition) {
 function PnLMetric({
   label,
   value,
+  secondaryValue,
   tone = "text-slate-950",
 }: {
   label: string;
   value: string;
+  secondaryValue?: string;
   tone?: string;
 }) {
-  return <div><dt className="text-xs text-slate-400">{label}</dt><dd className={`mt-1 font-semibold ${tone}`}>{value}</dd></div>;
+  return <div><dt className="text-xs text-slate-400">{label}</dt><dd className={`mt-1 font-semibold ${tone}`}>{value}{secondaryValue ? <span className="ml-2 inline-block text-xs font-normal text-slate-500">{secondaryValue}</span> : null}</dd></div>;
 }
 
 function PositionPnLCard({
   item,
   compact = false,
+  usdTwdRate,
 }: {
   item: PositionPnL;
   compact?: boolean;
+  usdTwdRate: number | null;
 }) {
   const { position, latestPrice, marketValue, unrealizedGain, returnRate, price } = item;
   return (
@@ -1019,14 +1080,15 @@ function PositionPnLCard({
         <p className="font-semibold">{position.ticker} <span className="font-normal text-slate-500">{position.name}</span></p>
         <p className={`font-semibold ${pnlTone(unrealizedGain)}`}>
           {formatSignedMoney(unrealizedGain, position.currency)}
+          {usdTwdHint(unrealizedGain, position.currency, usdTwdRate) ? <span className="ml-2 text-xs font-normal text-slate-500">{usdTwdHint(unrealizedGain, position.currency, usdTwdRate)}</span> : null}
         </p>
       </div>
       <dl className={`mt-3 grid grid-cols-2 gap-x-4 gap-y-3 text-sm ${compact ? "sm:grid-cols-6" : "sm:grid-cols-3"}`}>
         <PnLMetric label="持股" value={formatPositionQuantity(position)} />
-        <PnLMetric label="成本" value={formatInvestmentMoney(position.totalCost, position.currency, 2)} />
-        <PnLMetric label="最新價格" value={latestPrice === null ? "尚未取得價格" : formatInvestmentMoney(latestPrice, position.currency, 2)} />
-        <PnLMetric label="市值" value={marketValue === null ? "尚未取得價格" : formatInvestmentMoney(marketValue, position.currency, 2)} />
-        <PnLMetric label="損益" value={formatSignedMoney(unrealizedGain, position.currency)} tone={pnlTone(unrealizedGain)} />
+        <PnLMetric label="成本" value={formatInvestmentMoney(position.totalCost, position.currency, 2)} secondaryValue={usdTwdHint(position.totalCost, position.currency, usdTwdRate)} />
+        <PnLMetric label="最新價格" value={latestPrice === null ? "尚未取得價格" : formatInvestmentMoney(latestPrice, position.currency, 2)} secondaryValue={usdTwdHint(latestPrice, position.currency, usdTwdRate)} />
+        <PnLMetric label="市值" value={marketValue === null ? "尚未取得價格" : formatInvestmentMoney(marketValue, position.currency, 2)} secondaryValue={usdTwdHint(marketValue, position.currency, usdTwdRate)} />
+        <PnLMetric label="損益" value={formatSignedMoney(unrealizedGain, position.currency)} tone={pnlTone(unrealizedGain)} secondaryValue={usdTwdHint(unrealizedGain, position.currency, usdTwdRate)} />
         <PnLMetric label="報酬率" value={formatReturnRate(returnRate)} tone={pnlTone(returnRate)} />
       </dl>
       {price && latestPrice !== null ? <p className="mt-3 text-xs text-slate-400">Yahoo Finance · {price.price_date}</p> : null}
@@ -1034,8 +1096,8 @@ function PositionPnLCard({
   );
 }
 
-function RecordRow({title,meta,amount,onEdit,onDelete}:{title:string;meta:string;amount:string;onEdit:()=>void;onDelete:()=>void}) {
-  return <div className="flex flex-wrap items-center gap-3 py-4"><div className="min-w-0 flex-1 basis-40"><p className="truncate font-semibold">{title}</p><p className="mt-1 truncate text-xs text-slate-400">{meta}</p></div><p className="shrink-0 text-sm font-semibold">{amount}</p><div className="flex w-full justify-end gap-1 sm:w-auto"><button type="button" onClick={onEdit} className="flex items-center gap-1 rounded-full bg-slate-100 px-3 py-1.5 text-xs font-semibold text-slate-600"><Pencil size={14} strokeWidth={2.2}/> 編輯</button><button type="button" onClick={onDelete} className="flex items-center gap-1 rounded-full bg-rose-50 px-3 py-1.5 text-xs font-semibold text-rose-600"><Trash2 size={14} strokeWidth={2.2}/> 刪除</button></div></div>;
+function RecordRow({title,meta,amount,amountHint,onEdit,onDelete}:{title:string;meta:string;amount:string;amountHint?:string;onEdit:()=>void;onDelete:()=>void}) {
+  return <div className="flex flex-wrap items-center gap-3 py-4"><div className="min-w-0 flex-1 basis-40"><p className="truncate font-semibold">{title}</p><p className="mt-1 truncate text-xs text-slate-400">{meta}</p></div><div className="shrink-0 text-right"><p className="text-sm font-semibold">{amount}</p>{amountHint ? <p className="text-xs text-slate-500">{amountHint}</p> : null}</div><div className="flex w-full justify-end gap-1 sm:w-auto"><button type="button" onClick={onEdit} className="flex items-center gap-1 rounded-full bg-slate-100 px-3 py-1.5 text-xs font-semibold text-slate-600"><Pencil size={14} strokeWidth={2.2}/> 編輯</button><button type="button" onClick={onDelete} className="flex items-center gap-1 rounded-full bg-rose-50 px-3 py-1.5 text-xs font-semibold text-rose-600"><Trash2 size={14} strokeWidth={2.2}/> 刪除</button></div></div>;
 }
 function Empty(){return <p className="py-8 text-center text-sm text-slate-400">尚無資料</p>;}
 function ResourceError({error}:{error?:ResourceErrorInfo}) {

@@ -429,6 +429,44 @@ export function formatInvestmentMoney(
   return `${currency === "TWD" ? "NT$" : "US$"}${amount}`;
 }
 
+export type UsdTwdQuote = {
+  rate: number;
+  date: string;
+};
+
+// Frankfurter v2 provides a daily USD/TWD CBC reference quote, not a
+// broker's execution rate. Reject invalid payloads instead of guessing.
+export function parseUsdTwdQuote(value: unknown): UsdTwdQuote | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const quote = value as Record<string, unknown>;
+  const { rate, date } = quote;
+  if (
+    quote.base !== "USD" ||
+    quote.quote !== "TWD" ||
+    typeof rate !== "number" ||
+    !Number.isFinite(rate) ||
+    rate <= 0 ||
+    typeof date !== "string" ||
+    !/^\d{4}-\d{2}-\d{2}$/.test(date)
+  ) return null;
+  const asDate = new Date(`${date}T00:00:00.000Z`);
+  if (Number.isNaN(asDate.getTime()) || asDate.toISOString().slice(0, 10) !== date) return null;
+  return { rate, date };
+}
+
+// Display-only conversion; never write current FX estimates to trade records.
+export function convertUsdToTwd(amount: number | null, rate: number | null): number | null {
+  if (
+    amount === null ||
+    rate === null ||
+    !Number.isFinite(amount) ||
+    !Number.isFinite(rate) ||
+    rate <= 0
+  ) return null;
+  const value = amount * rate;
+  return Number.isFinite(value) ? value : null;
+}
+
 export function getExchangeRateDisplay(
   fromCurrency: Currency,
   toCurrency: Currency,
