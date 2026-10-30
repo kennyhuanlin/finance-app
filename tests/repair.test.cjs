@@ -51,7 +51,7 @@ test('USD/TWD sums do not mix and legacy rows default to TWD',()=>{
  assert.equal(normalizeFinanceCurrency(undefined),'TWD');
  assert.equal(normalizeFinanceCurrency('USD'),'USD');
  assert.equal(normalizeFinanceCurrency('EUR'),'TWD');
- assert.match(formatFinanceMoney(26.25,'USD'),/26\\.25/);
+ assert.ok(formatFinanceMoney(26.25,'USD').includes('26.25'));
  const rows=[{amount:200},{amount:26.25,currency:'USD'},{amount:30,currency:'TWD'}];
  assert.equal(sumAmountsByCurrency(rows,'TWD'),230);
  assert.equal(sumAmountsByCurrency(rows,'USD'),26.25);
@@ -129,6 +129,7 @@ test('service-account recurring CRUD and investment GET have no read-side writes
  assert.equal((await route.POST(request('', 'POST',validRule),ctx)).status,201);
  assert.equal(fixture.recurring_rules.length,2);
  assert.equal((await route.POST(request('', 'POST',{...validRule,amount:0}),ctx)).status,400);
+ assert.equal((await route.POST(request('', 'POST',{...validRule,id:'usd-active',amount:26.25,currency:'USD',enabled:true}),ctx)).status,409);
  assert.equal(fixture.recurring_rules.length,2);
  calls=[];
  assert.equal((await route.GET(request(),ctx)).status,200);
