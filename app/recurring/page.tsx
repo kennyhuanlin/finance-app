@@ -463,18 +463,29 @@ export default function RecurringPage() {
   const monthlyExpenseTotal = useMemo(
     () =>
       rules
-        .filter((rule) => isExpenseRule(rule) && isActiveRule(rule))
+        .filter((rule) => isExpenseRule(rule) && isActiveRule(rule) && rule.currency === "TWD")
         .reduce((sum, rule) => sum + getMonthlyAmount(rule), 0),
     [rules],
   );
   const monthlyIncomeTotal = useMemo(
     () =>
       rules
-        .filter((rule) => isIncomeRule(rule) && isActiveRule(rule))
+        .filter((rule) => isIncomeRule(rule) && isActiveRule(rule) && rule.currency === "TWD")
         .reduce((sum, rule) => sum + getMonthlyAmount(rule), 0),
     [rules],
   );
+  const monthlyExpenseUsd = useMemo(
+    () => rules.filter((rule) => isExpenseRule(rule) && isActiveRule(rule) && rule.currency === "USD")
+      .reduce((sum, rule) => sum + getMonthlyAmount(rule), 0),
+    [rules],
+  );
+  const monthlyIncomeUsd = useMemo(
+    () => rules.filter((rule) => isIncomeRule(rule) && isActiveRule(rule) && rule.currency === "USD")
+      .reduce((sum, rule) => sum + getMonthlyAmount(rule), 0),
+    [rules],
+  );
   const monthlyNetFlow = monthlyIncomeTotal - monthlyExpenseTotal;
+  const monthlyNetFlowUsd = monthlyIncomeUsd - monthlyExpenseUsd;
 
   async function toggleRule(rule: RecurringRule) {
     if (updatingRuleId) return;
@@ -853,12 +864,14 @@ export default function RecurringPage() {
             <p className="mt-2 text-xl font-semibold text-rose-600">
               {formatMoney(monthlyExpenseTotal)}
             </p>
+            {monthlyExpenseUsd !== 0 ? <p className="mt-1 text-sm text-slate-500">{formatMoney(monthlyExpenseUsd, "USD")}（另計）</p> : null}
           </article>
           <article className="rounded-[28px] border border-white/75 bg-white/80 p-4 shadow-sm shadow-slate-200/80 backdrop-blur-xl">
             <p className="text-sm font-medium text-slate-500">每月固定收入</p>
             <p className="mt-2 text-xl font-semibold text-emerald-600">
               {formatMoney(monthlyIncomeTotal)}
             </p>
+            {monthlyIncomeUsd !== 0 ? <p className="mt-1 text-sm text-slate-500">{formatMoney(monthlyIncomeUsd, "USD")}（另計）</p> : null}
           </article>
           <article className="rounded-[28px] border border-white/75 bg-white/80 p-4 shadow-sm shadow-slate-200/80 backdrop-blur-xl">
             <p className="text-sm font-medium text-slate-500">
@@ -871,6 +884,7 @@ export default function RecurringPage() {
             >
               {formatMoney(monthlyNetFlow)}
             </p>
+            {monthlyNetFlowUsd !== 0 ? <p className="mt-1 text-sm text-slate-500">{formatMoney(monthlyNetFlowUsd, "USD")}（美元淨額）</p> : null}
           </article>
         </section>
 
@@ -950,7 +964,7 @@ export default function RecurringPage() {
                           ruleIsIncome ? "text-emerald-600" : "text-slate-950"
                         }`}
                       >
-                        {formatMoney(getMonthlyAmount(rule))}
+                        {formatMoney(getMonthlyAmount(rule), rule.currency)}
                       </p>
                     </div>
                     <div className="min-w-0 text-right">
@@ -960,7 +974,7 @@ export default function RecurringPage() {
                           ruleIsIncome ? "text-emerald-600" : "text-rose-600"
                         }`}
                       >
-                        {formatMoney(rule.amount)} / {formatFrequencyUnit(rule.frequency)}
+                        {formatMoney(rule.amount, rule.currency)} / {formatFrequencyUnit(rule.frequency)}
                       </p>
                       <p className="mt-1 text-xs font-medium text-slate-400">
                         {formatFrequency(rule.frequency)}
@@ -1212,19 +1226,33 @@ export default function RecurringPage() {
 
               <div className="grid gap-3">
                 <div className="grid gap-2">
-                  <span className="text-sm font-medium text-slate-500">金額</span>
+                  <label className="grid gap-2">
+                    <span className="text-sm font-medium text-slate-500">幣別</span>
+                    <select
+                      aria-label="固定收支幣別"
+                      value={editingRule.currency}
+                      onChange={(event) => updateEditingRule("currency", event.target.value as FinanceCurrency)}
+                      className="h-12 rounded-[20px] bg-slate-50 px-4 text-base font-medium outline-none focus:bg-white focus:ring-2 focus:ring-slate-200"
+                    >
+                      <option value="TWD">台幣 TWD</option>
+                      <option value="USD">美金 USD</option>
+                    </select>
+                  </label>
+                  <div className="grid gap-2">
+                    <span className="text-sm font-medium text-slate-500">金額</span>
                   <button
                     type="button"
                     onClick={() => setAmountKeyboardOpen(true)}
                     className="flex min-h-20 items-center justify-between rounded-[24px] bg-slate-50 px-4 text-left transition active:scale-[0.99]"
                   >
                     <span className="text-xl font-semibold text-slate-400">
-                      NT$
+                      {editingRule.currency === "USD" ? "US$" : "NT$"}
                     </span>
                     <span className="min-w-0 flex-1 truncate text-right text-4xl font-semibold tracking-normal text-slate-950">
                       {formatAmountDisplay(editingRule.amount)}
                     </span>
                   </button>
+                  </div>
                 </div>
 
                 <label className="grid gap-2">
