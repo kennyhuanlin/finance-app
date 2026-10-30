@@ -269,6 +269,15 @@ export async function PUT(request: NextRequest, context: Context) {
     }
     const id = requireId(body);
     recordId = id;
+    if (sheet === "recurring_rules") {
+      const rules = await readSheetWithRetry(sheet);
+      const current = rules.find((row) => String(row.id) === id);
+      const currency = String(body.currency ?? current?.currency ?? "TWD");
+      const enabled = normalizeBoolean(body.enabled ?? current?.enabled, true);
+      if (currency === "USD" && enabled) {
+        throw new ApiError("美元固定收支尚不能啟用：正式每日排程未完成 USD 驗收", 409);
+      }
+    }
     if (shouldUseAppsScriptFallback()) {
       return appsScriptFallback("PUT", sheet, body);
     }
