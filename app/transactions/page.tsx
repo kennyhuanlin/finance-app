@@ -5,7 +5,13 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useCategories } from "../categories-context";
 import { formatCategoryLabel } from "../lib/categories";
-import { getTransactionDisplayName } from "../lib/transactions";
+import {
+  getTransactionDisplayName,
+  formatFinanceMoney,
+  normalizeFinanceCurrency,
+  sumAmountsByCurrency,
+  type FinanceCurrency,
+} from "../lib/transactions";
 import {
   createTransaction,
   deleteTransaction as deleteSheetTransaction,
@@ -21,6 +27,7 @@ type Transaction = {
   category: string;
   categoryId?: string;
   amount: number;
+  currency: FinanceCurrency;
   note: string;
   memo?: string;
   sourceType: string;
@@ -41,12 +48,8 @@ const TRANSACTIONS_PAGE_SIZE = 10;
 
 type NormalizedPeriod = "thisMonth" | "lastMonth" | "quarter" | "year" | "all";
 
-function formatMoney(value: number) {
-  return new Intl.NumberFormat("zh-TW", {
-    style: "currency",
-    currency: "TWD",
-    maximumFractionDigits: 0,
-  }).format(value);
+function formatMoney(value: number, currency: FinanceCurrency = "TWD") {
+  return formatFinanceMoney(value, currency);
 }
 
 function formatDate(date: string) {
@@ -188,6 +191,7 @@ function normalizeTransaction(
         ? undefined
         : String(transaction.categoryId),
     amount: Number(transaction.amount ?? 0),
+    currency: normalizeFinanceCurrency(transaction.currency),
     note: String(transaction.note ?? ""),
     memo:
       transaction.memo === undefined ? undefined : String(transaction.memo),
@@ -358,14 +362,11 @@ function TransactionsContent() {
       : typeParam === "expense"
         ? expenseTransactions
         : periodFilteredTransactions;
-  const incomeTotal = incomeTransactions.reduce(
-    (sum, item) => sum + item.amount,
-    0,
-  );
-  const expenseTotal = expenseTransactions.reduce(
-    (sum, item) => sum + item.amount,
-    0,
-  );
+  // Keep currencies separated: USD amounts must not inflate NT$ totals.
+  const incomeTotal = sumAmountsByCurrency(incomeTransactions, "TWD");
+  const incomeUsd = sumAmountsByCurrency(incomeTransactions, "USD");
+  const expenseTotal = sumAmountsByCurrency(expenseTransactions, "TWD");
+  const expenseUsd = sumAmountsByCurrency(expenseTransactions, "USD");
   const pageTitle =
     typeParam === "income"
       ? "收入明細"
@@ -375,12 +376,12 @@ function TransactionsContent() {
   const periodLabel = formatPeriodFilterLabel(periodFilter);
   const summaryCards =
     typeParam === "income"
-      ? [{ label: "收入", value: incomeTotal, tone: "text-emerald-600" }]
+      ? [{ label: "收入", value: incomeTotal, usdValue: incomeUsd, tone: "text-emerald-600" }]
       : typeParam === "expense"
-        ? [{ label: "支出", value: expenseTotal, tone: "text-rose-600" }]
+        ? [{ label: "支出", value: expenseTotal, usdValue: expenseUsd, tone: "text-rose-600" }]
         : [
-            { label: "收入", value: incomeTotal, tone: "text-emerald-600" },
-            { label: "支出", value: expenseTotal, tone: "text-rose-600" },
+            { label: "收入", value: incomeTotal, usdValue: incomeUsd, tone: "text-emerald-600" },
+            { label: "支出", value: expenseTotal, usdValue: expenseUsd, tone: "text-rose-600" },
           ];
   const visibleTransactions = filteredTransactions.slice(0, visibleCount);
   const visibleTransactionsCount = visibleTransactions.length;
@@ -441,6 +442,7 @@ function TransactionsContent() {
       category: nextCategory?.name ?? "",
       categoryId: nextCategory?.id,
       amount: "",
+      currency: "TWD",
       note: "",
       sourceType: "manual",
       recurringId: null,
@@ -562,6 +564,7 @@ function TransactionsContent() {
         category: nextTransaction.category,
         categoryId: nextTransaction.categoryId ?? "",
         amount: Number(nextTransaction.amount),
+        currency: nextTransaction.currency,
         note: nextTransaction.note,
         sourceType: nextTransaction.sourceType,
         recurringId: nextTransaction.recurringId ?? "",
