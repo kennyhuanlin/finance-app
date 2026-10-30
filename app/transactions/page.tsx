@@ -667,6 +667,11 @@ function TransactionsContent() {
               <p className={`mt-2 text-xl font-semibold ${card.tone}`}>
                 {formatMoney(card.value)}
               </p>
+              {card.usdValue !== 0 ? (
+                <p className="mt-1 text-sm font-medium text-slate-500">
+                  {formatMoney(card.usdValue, "USD")}（美元另計）
+                </p>
+              ) : null}
             </article>
           ))}
         </section>
@@ -743,7 +748,7 @@ function TransactionsContent() {
                       }`}
                     >
                       {isIncome ? "+" : "-"}
-                      {formatMoney(item.amount)}
+                      {formatMoney(item.amount, item.currency)}
                     </p>
                   </div>
 
@@ -910,9 +915,22 @@ function TransactionsContent() {
               ) : null}
 
               <label className="grid gap-2">
+                <span className="text-sm font-medium text-slate-500">幣別</span>
+                <select
+                  aria-label="交易幣別"
+                  value={editingTransaction.currency}
+                  onChange={(event) => updateEditingTransaction("currency", event.target.value as FinanceCurrency)}
+                  className="h-12 rounded-[20px] bg-slate-50 px-4 text-base font-medium outline-none focus:bg-white focus:ring-2 focus:ring-slate-200"
+                >
+                  <option value="TWD">台幣 TWD</option>
+                  <option value="USD">美金 USD</option>
+                </select>
+              </label>
+
+              <label className="grid gap-2">
                 <span className="text-sm font-medium text-slate-500">金額</span>
                 <div className="flex min-h-20 items-center rounded-[24px] bg-slate-50 px-4">
-                  <span className="text-xl font-semibold text-slate-400">NT$</span>
+                  <span className="text-xl font-semibold text-slate-400">{editingTransaction.currency === "USD" ? "US$" : "NT$"}</span>
                   <input
                     type="text"
                     inputMode="none"
