@@ -7,6 +7,7 @@ import {
   calculatePositions,
   calculatePositionPnL,
   calculateTradeTotal,
+  convertUsdToTwd,
   type CashAccount,
   type CashLedger,
   type Currency,
@@ -29,6 +30,8 @@ import {
   type Market,
   normalizeSymbol,
   normalizeInvestmentTradeType,
+  parseUsdTwdQuote,
+  type UsdTwdQuote,
   type TradeSide,
 } from "../lib/investments";
 import {
@@ -95,6 +98,13 @@ type AdjustmentForm = {
 };
 
 const nowIso = () => new Date().toISOString();
+const usdTwdQuoteUrl = "https://api.frankfurter.dev/v2/providers/cbc/rate/usd/twd";
+
+function usdTwdHint(amount: number | null, currency: Currency, rate: number | null): string | undefined {
+  if (currency !== "USD" || amount === null) return undefined;
+  const twd = convertUsdToTwd(amount, rate);
+  return twd === null ? "匯率暫無資料" : "約 " + formatInvestmentMoney(twd, "TWD");
+}
 const emptyTrade = (): TradeForm => ({
   id: "", date: localDateKey(), market: "TW", symbol: "", ticker: "", name: "", side: "buy",
   type: "buy", quantity: "", unit: "lot", price: "", fee: "0", tax: "0", currency: "TWD",
@@ -233,6 +243,8 @@ export default function InvestmentsPage() {
   const [isSyncing, setIsSyncing] = useState(false);
   const [isUpdatingPrices, setIsUpdatingPrices] = useState(false);
   const [fxRateDisplay, setFxRateDisplay] = useState("");
+  const [remoteUsdTwd, setRemoteUsdTwd] = useState<UsdTwdQuote | null>(null);
+  const [usdTwdRatePending, setUsdTwdRatePending] = useState(true);
   const [resourceErrors, setResourceErrors] = useState<
     Partial<Record<InvestmentResource, ResourceErrorInfo>>
   >({});
@@ -275,6 +287,33 @@ export default function InvestmentsPage() {
       );
   }, []);
 
+  // Read-only daily Taiwan CBC reference rate; no account data is transmitted.
+  useEffect(() => {
+    const controller = new AbortController();
+    let active = true;
+    const timeout = window.setTimeout(() => controller.abort(), 8000);
+    void fetch(usdTwdQuoteUrl, { signal: controller.signal })
+      .then((response) => {
+        if (!response.ok) throw new Error("USD/TWD quote unavailable");
+        return response.json();
+      })
+      .then((payload: unknown) => {
+        if (active) setRemoteUsdTwd(parseUsdTwdQuote(payload));
+      })
+      .catch(() => {
+        // Offline or unavailable provider: fall back to a labeled FX record.
+      })
+      .finally(() => {
+        window.clearTimeout(timeout);
+        if (active) setUsdTwdRatePending(false);
+      });
+    return () => {
+      active = false;
+      window.clearTimeout(timeout);
+      controller.abort();
+    };
+  }, []);
+
   const calculatedPositions = useMemo(() => calculatePositions(trades), [trades]);
   const positions = positionSnapshots.length ? positionSnapshots : calculatedPositions;
   const portfolioPnLs = useMemo(
@@ -290,20 +329,34 @@ export default function InvestmentsPage() {
   const dividendTwd = dividends.reduce((sum, item) => sum + item.amountTwd, 0);
   const twdCash = cashAccounts.filter((item) => item.currency === "TWD").reduce((sum, item) => sum + item.balance, 0);
   const usdCash = cashAccounts.filter((item) => item.currency === "USD").reduce((sum, item) => sum + item.balance, 0);
-  const latestUsdTwdRate = fxRecords
+  const lastRecordedRate = fxRecords
     .slice()
     .sort((a, b) => `${b.date}|${b.updatedAt}`.localeCompare(`${a.date}|${a.updatedAt}`))
-    .map((item) =>
-      getExchangeRateDisplay(
-        item.fromCurrency,
-        item.toCurrency,
-        item.exchangeRate ||
-          item.toAmount / Math.max(item.fromAmount, 1),
+    .map((item) => ({
+      date: item.date,
+      rate: getExchangeRateDisplay(
+        item.fromCurrency, item.toCurrency,
+        item.exchangeRate || item.toAmount / Math.max(item.fromAmount, 1),
       ),
-    )
-    .find((rate) => rate > 0) ?? 1;
-  const investmentCostTwd = twCost + usCost * latestUsdTwdRate;
-  const estimatedAssets = twdCash + usdCash * latestUsdTwdRate + investmentCostTwd;
+    }))
+    .find((item) => Number.isFinite(item.rate) && item.rate > 0) ?? null;
+  const usdTwdRate = remoteUsdTwd?.rate ?? lastRecordedRate?.rate ?? null;
+  const rateSource = remoteUsdTwd
+    ? "台灣央行收盤參考（" + remoteUsdTwd.date + "）"
+    : lastRecordedRate
+      ? "最近換匯紀錄（" + (lastRecordedRate.date || "日期不明") + "），非最新市場匯率"
+      : usdTwdRatePending ? "正在取得參考匯率" : "目前沒有可用匯率";
+  const usdCostTwd = convertUsdToTwd(usCost, usdTwdRate);
+  const usdCashTwd = convertUsdToTwd(usdCash, usdTwdRate);
+  const investmentCostTwd = usCost !== 0 && usdCostTwd === null ? null : twCost + (usdCostTwd ?? 0);
+  const estimatedAssets = (usCost !== 0 || usdCash !== 0) && usdTwdRate === null
+    ? null
+    : twdCash + twCost + (usdCostTwd ?? 0) + (usdCashTwd ?? 0);
+  const tradeDraftTotal = calculateTradeTotal(
+    tradeForm.market, tradeForm.side, number(tradeForm.quantity),
+    number(tradeForm.price), number(tradeForm.fee), number(tradeForm.tax),
+    tradeForm.unit, tradeForm.type,
+  );
 
   function openTrade(item?: InvestmentTrade) {
     setTradeForm(item ? { ...item, quantity: String(item.quantity), price: String(item.price), fee: String(item.fee), tax: String(item.tax), exchangeRate: String(item.exchangeRate) } : emptyTrade());
@@ -799,9 +852,9 @@ export default function InvestmentsPage() {
                     {summary.currency === "TWD" ? "台股投資" : "美股投資"}
                   </h3>
                   <dl className="mt-4 grid grid-cols-2 gap-4">
-                    <PnLMetric label="總投入成本" value={formatInvestmentMoney(summary.totalCost, summary.currency, 2)} />
-                    <PnLMetric label="目前市值" value={summary.marketValue === null ? "尚未取得價格" : formatInvestmentMoney(summary.marketValue, summary.currency, 2)} />
-                    <PnLMetric label="未實現損益" value={formatSignedMoney(summary.unrealizedGain, summary.currency)} tone={pnlTone(summary.unrealizedGain)} />
+                    <PnLMetric label="總投入成本" value={formatInvestmentMoney(summary.totalCost, summary.currency, 2)} secondaryValue={usdTwdHint(summary.totalCost, summary.currency, usdTwdRate)} />
+                    <PnLMetric label="目前市值" value={summary.marketValue === null ? "尚未取得價格" : formatInvestmentMoney(summary.marketValue, summary.currency, 2)} secondaryValue={usdTwdHint(summary.marketValue, summary.currency, usdTwdRate)} />
+                    <PnLMetric label="未實現損益" value={formatSignedMoney(summary.unrealizedGain, summary.currency)} tone={pnlTone(summary.unrealizedGain)} secondaryValue={usdTwdHint(summary.unrealizedGain, summary.currency, usdTwdRate)} />
                     <PnLMetric label="報酬率" value={formatReturnRate(summary.returnRate)} tone={pnlTone(summary.returnRate)} />
                   </dl>
                 </article>
@@ -820,15 +873,19 @@ export default function InvestmentsPage() {
 
           <div className="grid grid-cols-2 gap-3 lg:grid-cols-3">
           {[
-            ["台幣現金", formatInvestmentMoney(twdCash, "TWD")],
-            ["美元現金", formatInvestmentMoney(usdCash, "USD")],
-            ["台股成本", formatInvestmentMoney(twCost, "TWD")],
-            ["美股成本", formatInvestmentMoney(usCost, "USD")],
-            ["投資總成本", formatInvestmentMoney(investmentCostTwd, "TWD")],
-            ["累計股息", formatInvestmentMoney(dividendTwd, "TWD")],
-            ["投資帳戶總資產估算", formatInvestmentMoney(estimatedAssets, "TWD")],
-          ].map(([label, value]) => <article key={label} className={card}><p className="text-xs font-medium text-slate-500">{label}</p><p className="mt-3 text-xl font-semibold">{value}</p></article>)}
-          <p className="col-span-2 px-1 text-xs text-slate-400 lg:col-span-3">美元換算匯率：1 USD = {latestUsdTwdRate.toFixed(4)} TWD；股票資產暫以持有成本估算。</p>
+            { label: "台幣現金", value: formatInvestmentMoney(twdCash, "TWD") },
+            { label: "美元現金", value: formatInvestmentMoney(usdCash, "USD"), secondaryValue: usdTwdHint(usdCash, "USD", usdTwdRate) },
+            { label: "台股成本", value: formatInvestmentMoney(twCost, "TWD") },
+            { label: "美股成本", value: formatInvestmentMoney(usCost, "USD"), secondaryValue: usdTwdHint(usCost, "USD", usdTwdRate) },
+            { label: "投資總成本", value: investmentCostTwd === null ? "匯率暫無資料" : formatInvestmentMoney(investmentCostTwd, "TWD") },
+            { label: "累計股息", value: formatInvestmentMoney(dividendTwd, "TWD") },
+            { label: "投資帳戶總資產估算", value: estimatedAssets === null ? "匯率暫無資料" : formatInvestmentMoney(estimatedAssets, "TWD") },
+          ].map(({label, value, secondaryValue}) => <article key={label} className={card}><p className="text-xs font-medium text-slate-500">{label}</p><p className="mt-3 text-xl font-semibold">{value}</p>{secondaryValue ? <p className="mt-1 text-xs text-slate-500">{secondaryValue}</p> : null}</article>)}
+          <p className="col-span-2 px-1 text-xs text-slate-400 lg:col-span-3">
+            美元換算匯率：{usdTwdRate === null ? "暫無資料" : "1 USD = " + usdTwdRate.toFixed(4) + " TWD"} · {rateSource}。
+            {remoteUsdTwd ? <> <a href="https://frankfurter.dev/providers/cbc/" target="_blank" rel="noopener noreferrer" className="underline">匯率來源</a>。</> : null}
+            台幣為參考估值，非實際成交匯率；股票總資產暫以持有成本估算。
+          </p>
           </div>
         </div> : null}
 
