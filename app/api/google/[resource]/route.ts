@@ -79,6 +79,13 @@ function normalizeResourceBody(
   body: Record<string, unknown>,
 ) {
   if (
+    (sheet === "transactions" || sheet === "recurring_rules") &&
+    Object.prototype.hasOwnProperty.call(body, "currency") &&
+    !["TWD", "USD"].includes(String(body.currency))
+  ) {
+    throw new ApiError("幣別只能選擇台幣 TWD 或美金 USD", 400);
+  }
+  if (
     sheet === "recurring_rules" &&
     Object.prototype.hasOwnProperty.call(body, "enabled")
   ) {
@@ -207,6 +214,10 @@ export async function POST(request: NextRequest, context: Context) {
     if (sheet === "recurring_rules") {
       const message = validateRecurringRule(body);
       if (message) throw new ApiError(message, 400);
+      // The bound production daily scheduler cannot yet persist USD currency.
+      if (body.currency === "USD" && normalizeBoolean(body.enabled, true)) {
+        throw new ApiError("美元固定收支可先暫停儲存；需升級每日排程後才能啟用自動記帳", 409);
+      }
     }
     if (shouldUseAppsScriptFallback()) {
       return appsScriptFallback("POST", sheet, body);
