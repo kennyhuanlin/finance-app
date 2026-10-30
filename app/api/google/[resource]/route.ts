@@ -269,8 +269,16 @@ export async function PUT(request: NextRequest, context: Context) {
     }
     const id = requireId(body);
     recordId = id;
-    if (sheet === "recurring_rules") {
-      const rules = await readSheetWithRetry(sheet);
+    if (
+      sheet === "recurring_rules" &&
+      (body.currency === "USD" || Object.prototype.hasOwnProperty.call(body, "enabled"))
+    ) {
+      // Read through the same configured source as the subsequent write.
+      // The isolated browser fixture (and legacy installations) use Apps Script.
+      const rules = shouldUseAppsScriptFallback()
+        ? (await (await appsScriptFallback("GET", sheet)).json()) as Record<string, unknown>[]
+        : await readSheetWithRetry(sheet);
+      if (!Array.isArray(rules)) throw new ApiError("固定收支資料無法驗證幣別", 502);
       const current = rules.find((row) => String(row.id) === id);
       const currency = String(body.currency ?? current?.currency ?? "TWD");
       const enabled = normalizeBoolean(body.enabled ?? current?.enabled, true);
