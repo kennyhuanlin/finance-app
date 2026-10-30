@@ -87,6 +87,15 @@ async function main() {
   await page.getByRole('button',{name:'刪除',exact:true}).first().click();
   await page.getByText('隔離固定收入',{exact:true}).waitFor({state:'hidden'});
   assert.ok(!(await readRules()).some(row=>row.name==='隔離固定收入'));
+  // USD recurring rules must stay paused until the live scheduled writer is upgraded.
+  await page.getByRole('button',{name:'固定支出',exact:true}).first().click();
+  await page.getByRole('button',{name:'新增固定支出',exact:true}).first().click();
+  await form.waitFor();
+  await form.getByRole('combobox',{name:'固定收支幣別'}).selectOption('USD');
+  assert.equal(await form.getByRole('combobox',{name:'固定收支幣別'}).inputValue(),'USD');
+  await form.getByText('美元規則暫不自動記帳',{exact:false}).waitFor();
+  await form.getByRole('button',{name:'取消',exact:true}).click();
+  await form.waitFor({state:'hidden'});
   // Exercise real HTTP handlers for ordinary transaction CRUD using synthetic storage.
   const txUrl='http://127.0.0.1:45817/api/google/transactions';
   assert.equal((await context.request.post(txUrl,{headers:mutationHeaders,data:{id:'fixture-tx',date:'2026-01-31',type:'支出',category:'測試支出',amount:3}})).status(),200);
@@ -95,7 +104,9 @@ async function main() {
   await page.goto('http://127.0.0.1:45817/transactions');
   await page.getByRole('button',{name:'新增',exact:true}).click();
   const txForm=page.getByRole('dialog',{name:'交易表單'});await txForm.waitFor();
-  await txForm.getByRole('combobox',{name:'分類',exact:true}).selectOption('測試支出');
+  await txForm.getByRole('combobox',{name:'分類',exact:true}).selectOption('AI工具訂閱');
+  await txForm.getByRole('combobox',{name:'交易幣別'}).selectOption('USD');
+  assert.equal(await txForm.getByRole('combobox',{name:'交易幣別'}).inputValue(),'USD');
   await txForm.getByLabel('開啟金額計算機',{exact:true}).click();
   const calculator=page.getByRole('dialog',{name:'金額計算機'});await calculator.waitFor();
   await calculator.getByRole('button',{name:'3',exact:true}).click();await calculator.getByRole('button',{name:'確認 OK',exact:true}).click();
@@ -104,7 +115,13 @@ async function main() {
   await txForm.getByRole('button',{name:'儲存',exact:true}).click();await txForm.getByRole('alert').filter({hasText:'合成一般交易失敗'}).waitFor();
   assert.equal(await txForm.getByLabel('備註',{exact:true}).inputValue(),'一般交易失敗測試');
   await txForm.getByLabel('備註',{exact:true}).fill('手機合成交易');await txForm.getByRole('button',{name:'儲存',exact:true}).click();await txForm.waitFor({state:'hidden'});
-  await page.getByText('手機合成交易',{exact:true}).waitFor();await page.getByRole('button',{name:'編輯',exact:true}).first().click();await txForm.waitFor();
+  await page.getByText('手機合成交易',{exact:true}).waitFor();
+  const stored = await (await context.request.get(txUrl,{headers:{authorization}})).json();
+  const savedUsd = stored.find(row=>row.note==='手機合成交易');
+  assert.equal(savedUsd.currency,'USD');
+  assert.equal(savedUsd.category,'AI工具訂閱');
+  assert.equal(savedUsd.amount,3);
+  await page.getByRole('button',{name:'編輯',exact:true}).first().click();await txForm.waitFor();
   await txForm.getByLabel('備註',{exact:true}).fill('手機合成交易已修改');await page.screenshot({path:'test-results/transactions-mobile.png',fullPage:true});await txForm.getByRole('button',{name:'儲存',exact:true}).click();await txForm.waitFor({state:'hidden'});
   await page.getByText('手機合成交易已修改',{exact:true}).waitFor();page.once('dialog',dialog=>dialog.accept());await page.getByRole('button',{name:'刪除',exact:true}).first().click();
   await page.getByText('手機合成交易已修改',{exact:true}).waitFor({state:'hidden'});await page.unroute('**/api/google/transactions');

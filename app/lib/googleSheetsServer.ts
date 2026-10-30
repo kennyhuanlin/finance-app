@@ -10,7 +10,7 @@ export const sheetHeaders = {
   transactions: [
     "id", "date", "type", "category", "amount", "note", "createdAt",
     "updatedAt", "expenseType", "necessity", "categoryId", "sourceType",
-    "recurringId",
+    "recurringId", "currency",
   ],
   categories: [
     "id", "name", "type", "color", "icon", "sortOrder", "isActive",
@@ -20,7 +20,7 @@ export const sheetHeaders = {
     "id", "name", "type", "category", "amount", "frequency", "startDate",
     "endDate", "nextDate", "remainingCount", "isActive", "note", "createdAt",
     "updatedAt", "expenseType", "necessity", "nextRunDate", "enabled",
-    "lastRunDate", "categoryId", "nature", "account",
+    "lastRunDate", "categoryId", "nature", "account", "currency",
   ],
   investment_trades: [
     "id", "tradeDate", "market", "broker", "account", "symbol", "name",

@@ -8,6 +8,9 @@ import { transactions } from "./data";
 import { getTransactions } from "./lib/googleSheets";
 import {
   formatTransactionDate,
+  formatFinanceMoney,
+  normalizeFinanceCurrency,
+  sumAmountsByCurrency,
   getTransactionDisplayName,
   isExpenseTransaction,
   isIncomeTransaction,
@@ -170,21 +173,23 @@ function filterTransactionsByPeriod(
 }
 
 function calculateSummary(sourceTransactions: Transaction[]) {
-  const income = sourceTransactions
-    .filter(isIncomeTransaction)
-    .reduce((sum, transaction) => sum + Number(transaction.amount), 0);
-  const expense = sourceTransactions
-    .filter(isExpenseTransaction)
-    .reduce((sum, transaction) => sum + Number(transaction.amount), 0);
-  const fixedExpense = sourceTransactions
-    .filter(isRecurringExpenseTransaction)
-    .reduce((sum, transaction) => sum + Number(transaction.amount), 0);
+  const incomeRows = sourceTransactions.filter(isIncomeTransaction);
+  const expenseRows = sourceTransactions.filter(isExpenseTransaction);
+  const fixedRows = sourceTransactions.filter(isRecurringExpenseTransaction);
+  const income = sumAmountsByCurrency(incomeRows, "TWD");
+  const expense = sumAmountsByCurrency(expenseRows, "TWD");
+  const usdIncome = sumAmountsByCurrency(incomeRows, "USD");
+  const usdExpense = sumAmountsByCurrency(expenseRows, "USD");
 
   return {
     income,
     expense,
     balance: income - expense,
-    fixedExpense,
+    fixedExpense: sumAmountsByCurrency(fixedRows, "TWD"),
+    usdIncome,
+    usdExpense,
+    usdBalance: usdIncome - usdExpense,
+    usdFixedExpense: sumAmountsByCurrency(fixedRows, "USD"),
   };
 }
 
@@ -480,18 +485,20 @@ export default function Home() {
 
   const expenseCategories = sourceCategories
     .filter((category) => category.type === "expense")
-    .map((category) => ({
-      ...category,
-      amount: monthTransactions
-        .filter(
-          (transaction) =>
-            isExpenseTransaction(transaction) &&
-            (transaction.categoryId === category.id ||
-              transaction.category === category.name),
-        )
-        .reduce((sum, transaction) => sum + transaction.amount, 0),
-    }))
-    .filter((category) => category.amount > 0);
+    .map((category) => {
+      const rows = monthTransactions.filter(
+        (transaction) =>
+          isExpenseTransaction(transaction) &&
+          (transaction.categoryId === category.id ||
+            transaction.category === category.name),
+      );
+      return {
+        ...category,
+        amount: sumAmountsByCurrency(rows, "TWD"),
+        usdAmount: sumAmountsByCurrency(rows, "USD"),
+      };
+    })
+    .filter((category) => category.amount > 0 || category.usdAmount > 0);
 
   const totalCategoryExpense = expenseCategories.reduce(
     (sum, item) => sum + item.amount,
@@ -603,6 +610,13 @@ export default function Home() {
                     ? "Loading..."
                     : formatMoney(activeSummary[item.key])}
                 </p>
+                {transactionsLoadState === "success" && (() => {
+                  const usd = item.key === "income" ? activeSummary.usdIncome
+                    : item.key === "expense" ? activeSummary.usdExpense
+                    : item.key === "balance" ? activeSummary.usdBalance
+                    : activeSummary.usdFixedExpense;
+                  return usd !== 0 ? <p className="mt-1 text-xs font-medium text-slate-500">{formatFinanceMoney(usd, "USD")}（另計）</p> : null;
+                })()}
             </article>
           ))}
         </section>
@@ -613,7 +627,7 @@ export default function Home() {
               <div>
                 <p className="text-sm font-medium text-slate-500">支出分類</p>
                 <h2 className="mt-1 text-xl font-semibold tracking-normal">
-                  本月花費分布
+                  本月花費分布（台幣）
                 </h2>
               </div>
               <Suspense fallback={null}>
@@ -628,7 +642,7 @@ export default function Home() {
               >
                 <div className="grid h-28 w-28 place-items-center rounded-full bg-white shadow-inner shadow-slate-200 sm:h-32 sm:w-32">
                   <div className="text-center">
-                    <p className="text-xs font-medium text-slate-400">總支出</p>
+                    <p className="text-xs font-medium text-slate-400">台幣支出</p>
                     <p className="mt-1 text-lg font-semibold sm:text-xl">
                       {formatMoney(totalCategoryExpense)}
                     </p>
@@ -675,6 +689,7 @@ export default function Home() {
                     <div className="flex shrink-0 items-center gap-2">
                       <span className="text-sm font-semibold text-slate-950">
                         {formatMoney(item.amount)}
+                        {item.usdAmount !== 0 ? <span className="mt-1 block text-xs font-normal text-slate-500">{formatFinanceMoney(item.usdAmount, "USD")}（美元另計）</span> : null}
                       </span>
                       <span className="text-lg font-semibold text-slate-300">
                         ›
@@ -741,7 +756,7 @@ export default function Home() {
                       }`}
                     >
                       {isIncome ? "+" : "-"}
-                      {formatMoney(item.amount)}
+                      {formatFinanceMoney(item.amount, normalizeFinanceCurrency(item.currency))}
                     </p>
                   </div>
                 );

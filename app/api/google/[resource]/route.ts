@@ -79,6 +79,13 @@ function normalizeResourceBody(
   body: Record<string, unknown>,
 ) {
   if (
+    (sheet === "transactions" || sheet === "recurring_rules") &&
+    Object.prototype.hasOwnProperty.call(body, "currency") &&
+    !["TWD", "USD"].includes(String(body.currency))
+  ) {
+    throw new ApiError("幣別只能選擇台幣 TWD 或美金 USD", 400);
+  }
+  if (
     sheet === "recurring_rules" &&
     Object.prototype.hasOwnProperty.call(body, "enabled")
   ) {
@@ -207,6 +214,10 @@ export async function POST(request: NextRequest, context: Context) {
     if (sheet === "recurring_rules") {
       const message = validateRecurringRule(body);
       if (message) throw new ApiError(message, 400);
+      // The bound production daily scheduler cannot yet persist USD currency.
+      if (body.currency === "USD" && normalizeBoolean(body.enabled, true)) {
+        throw new ApiError("美元固定收支可先暫停儲存；需升級每日排程後才能啟用自動記帳", 409);
+      }
     }
     if (shouldUseAppsScriptFallback()) {
       return appsScriptFallback("POST", sheet, body);
@@ -258,6 +269,23 @@ export async function PUT(request: NextRequest, context: Context) {
     }
     const id = requireId(body);
     recordId = id;
+    if (
+      sheet === "recurring_rules" &&
+      (body.currency === "USD" || Object.prototype.hasOwnProperty.call(body, "enabled"))
+    ) {
+      // Read through the same configured source as the subsequent write.
+      // The isolated browser fixture (and legacy installations) use Apps Script.
+      const rules = shouldUseAppsScriptFallback()
+        ? (await (await appsScriptFallback("GET", sheet)).json()) as Record<string, unknown>[]
+        : await readSheetWithRetry(sheet);
+      if (!Array.isArray(rules)) throw new ApiError("固定收支資料無法驗證幣別", 502);
+      const current = rules.find((row) => String(row.id) === id);
+      const currency = String(body.currency ?? current?.currency ?? "TWD");
+      const enabled = normalizeBoolean(body.enabled ?? current?.enabled, true);
+      if (currency === "USD" && enabled) {
+        throw new ApiError("美元固定收支尚不能啟用：正式每日排程未完成 USD 驗收", 409);
+      }
+    }
     if (shouldUseAppsScriptFallback()) {
       return appsScriptFallback("PUT", sheet, body);
     }

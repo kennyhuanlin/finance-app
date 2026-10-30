@@ -35,6 +35,12 @@ function runRecurringTransactions() {
     const rowNumber = index + 2;
     if (!String(rule.id || "").trim() || !Number.isFinite(Number(rule.amount)) || Number(rule.amount) <= 0) return;
     if (!["daily", "weekly", "monthly", "quarterly", "yearly"].includes(String(rule.frequency))) return;
+    const currency = String(rule.currency || "TWD").trim().toUpperCase();
+    if (!["USD", "TWD"].includes(currency)) return;
+    // Never append an unlabelled USD transaction.
+    if (currency === "USD" && !transactionTable.headers.includes("currency")) {
+      throw new Error("USD recurring transaction blocked: missing currency column");
+    }
     const count = getRemainingCount(rule.remainingCount);
     if (count !== null && (!Number.isSafeInteger(count) || count < 0)) return;
 
@@ -119,6 +125,7 @@ function appendTransaction(sheet, headers, rule, dateKey) {
     category: rule.category,
     categoryId: rule.categoryId || "",
     amount: Number(rule.amount || 0),
+    currency: String(rule.currency || "TWD").trim().toUpperCase(),
     note: rule.note || rule.name,
     sourceType: "recurring",
     recurringId: rule.id,

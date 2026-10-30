@@ -14,6 +14,7 @@ require.extensions['.ts'] = function(module, filename) {
 // Every external request is a fixture or a hard failure. No real credentials/data.
 global.fetch = async () => { throw new Error('Unmocked network access prohibited'); };
 const { addPeriod, validateRecurringRule } = require('../app/lib/recurringDates.ts');
+const { normalizeFinanceCurrency, formatFinanceMoney, sumAmountsByCurrency } = require('../app/lib/transactions.ts');
 const { parseUsdTwdQuote, convertUsdToTwd } = require('../app/lib/investments.ts');
 const { requireFinanceAccess } = require('../app/lib/apiAccess.ts');
 const client = require('../app/lib/googleSheets.ts');
@@ -46,6 +47,18 @@ test('invalid or missing quote never invents a 1:1 TWD value',()=>{
 });
 
 const validRule={id:'fixture-rule', name:'Synthetic expense', category:'Fixture category', type:'支出', amount:125,frequency:'monthly',startDate:'2026-01-31',nextRunDate:'2026-02-28',remainingCount:'',enabled:true};
+test('USD/TWD sums do not mix and legacy rows default to TWD',()=>{
+ assert.equal(normalizeFinanceCurrency(undefined),'TWD');
+ assert.equal(normalizeFinanceCurrency('USD'),'USD');
+ assert.equal(normalizeFinanceCurrency('EUR'),'TWD');
+ assert.ok(formatFinanceMoney(26.25,'USD').includes('26.25'));
+ const rows=[{amount:200},{amount:26.25,currency:'USD'},{amount:30,currency:'TWD'}];
+ assert.equal(sumAmountsByCurrency(rows,'TWD'),230);
+ assert.equal(sumAmountsByCurrency(rows,'USD'),26.25);
+ const headers=require('../app/lib/googleSheetsServer.ts').sheetHeaders;
+ assert.ok(headers.transactions.includes('currency'));
+ assert.ok(headers.recurring_rules.includes('currency'));
+});
 for(const [date,frequency,anchor,expected] of [
  ['2026-01-31','monthly',undefined,'2026-02-28'],['2026-02-28','monthly','2026-01-31','2026-03-31'],
  ['2024-02-29','yearly',undefined,'2025-02-28'],['2026-01-31','quarterly',undefined,'2026-04-30'],
@@ -116,6 +129,7 @@ test('service-account recurring CRUD and investment GET have no read-side writes
  assert.equal((await route.POST(request('', 'POST',validRule),ctx)).status,201);
  assert.equal(fixture.recurring_rules.length,2);
  assert.equal((await route.POST(request('', 'POST',{...validRule,amount:0}),ctx)).status,400);
+ assert.equal((await route.POST(request('', 'POST',{...validRule,id:'usd-active',amount:26.25,currency:'USD',enabled:true}),ctx)).status,409);
  assert.equal(fixture.recurring_rules.length,2);
  calls=[];
  assert.equal((await route.GET(request(),ctx)).status,200);
@@ -149,8 +163,8 @@ test('client preserves backend errors and rejects malformed success',async()=>{
  assert.equal((await client.createRecurringRule(validRule)).id,'fixture-rule');
 });
 function scriptFixture(patch={}) {
- const ruleHeaders=['id','name','type','category','amount','frequency','startDate','nextRunDate','lastRunDate','remainingCount','enabled','endDate'];
- const txHeaders=['id','date','type','category','amount','note','sourceType','recurringId'];
+ const ruleHeaders=['id','name','type','category','amount','frequency','startDate','nextRunDate','lastRunDate','remainingCount','enabled','endDate','currency'];
+ const txHeaders=['id','date','type','category','amount','note','sourceType','recurringId','currency'];
  const record={...validRule,startDate:'2026-01-31',nextRunDate:'2026-01-31',remainingCount:'2',...patch};
  const rows={recurring_rules:[ruleHeaders,ruleHeaders.map(h=>record[h]??'')],transactions:[txHeaders]};let writes=0,released=0;
  const sheet=name=>({getDataRange:()=>({getValues:()=>rows[name].map(row=>[...row])}),appendRow:row=>{writes++;rows[name].push(row);},getRange:(row,col,_height,width=1)=>({
@@ -164,6 +178,18 @@ function scriptFixture(patch={}) {
 test('scheduler duplicate suppression, anchored month end and remaining periods',()=>{
  const f=scriptFixture();f.context.recurringTransactions();assert.equal(f.rows.transactions.length,2);assert.equal(f.rule().nextRunDate,'2026-02-28');assert.equal(f.rule().remainingCount,'1');
  f.rows.recurring_rules[1][7]='2026-01-31';f.context.recurringTransactions();assert.equal(f.rows.transactions.length,2);assert.equal(f.rule().remainingCount,'1');assert.equal(f.released(),2);
+});
+test('scheduled USD carries currency, disabled USD has no writes',()=>{
+ const active=scriptFixture({currency:'USD',amount:26.25});
+ active.context.recurringTransactions();
+ assert.equal(active.rows.transactions.length,2);
+ const keys=active.rows.transactions[0],row=active.rows.transactions[1];
+ assert.equal(row[keys.indexOf('currency')],'USD');
+ assert.equal(row[keys.indexOf('amount')],26.25);
+ const paused=scriptFixture({currency:'USD',amount:26.25,enabled:false});
+ paused.context.recurringTransactions();
+ assert.equal(paused.rows.transactions.length,1);
+ assert.equal(paused.writes(),0);
 });
 test('scheduler quarterly and exhaustion',()=>{const f=scriptFixture({frequency:'quarterly',remainingCount:'1'});f.context.recurringTransactions();assert.equal(f.rule().nextRunDate,'2026-04-30');assert.equal(f.rule().enabled,false);});
 for(const frequency of ['monthly','quarterly']) test(`scheduler repeated ${frequency} preserves anchored month ends`,()=>{

@@ -5,6 +5,7 @@ import Link from "next/link";
 import { ChevronDown, ChevronUp, Pencil, Trash2 } from "lucide-react";
 import { useCategories } from "../categories-context";
 import { formatCategoryLabel } from "../lib/categories";
+import { formatFinanceMoney, normalizeFinanceCurrency, type FinanceCurrency } from "../lib/transactions";
 import { addPeriod, validateRecurringRule } from "../lib/recurringDates";
 import { normalizeBoolean } from "../lib/boolean";
 import {
@@ -24,6 +25,7 @@ type RecurringRule = {
   categoryId?: string;
   category: string;
   amount: number;
+  currency: FinanceCurrency;
   frequency: string;
   expenseType: string;
   note: string;
@@ -55,6 +57,7 @@ const emptyForm: RuleForm = {
   necessity: "必要",
   category: "住房",
   amount: "",
+  currency: "TWD",
   frequency: "monthly",
   expenseType: "固定",
   note: "",
@@ -76,12 +79,8 @@ function isIncomeRule(rule: { type: string }) {
   return rule.type === "收入";
 }
 
-function formatMoney(value: number) {
-  return new Intl.NumberFormat("zh-TW", {
-    style: "currency",
-    currency: "TWD",
-    maximumFractionDigits: 0,
-  }).format(value);
+function formatMoney(value: number, currency: FinanceCurrency = "TWD") {
+  return formatFinanceMoney(value, currency);
 }
 
 function formatFrequency(value: string) {
@@ -260,6 +259,7 @@ function normalizeRecurringRule(
       rule.categoryId === undefined ? undefined : String(rule.categoryId),
     category: String(rule.category ?? ""),
     amount: Number.isFinite(amount) ? amount : 0,
+    currency: normalizeFinanceCurrency(rule.currency),
     frequency,
     expenseType: String(rule.expenseType ?? "固定"),
     note: String(rule.note ?? rule.memo ?? rule.description ?? ""),
@@ -463,21 +463,36 @@ export default function RecurringPage() {
   const monthlyExpenseTotal = useMemo(
     () =>
       rules
-        .filter((rule) => isExpenseRule(rule) && isActiveRule(rule))
+        .filter((rule) => isExpenseRule(rule) && isActiveRule(rule) && rule.currency === "TWD")
         .reduce((sum, rule) => sum + getMonthlyAmount(rule), 0),
     [rules],
   );
   const monthlyIncomeTotal = useMemo(
     () =>
       rules
-        .filter((rule) => isIncomeRule(rule) && isActiveRule(rule))
+        .filter((rule) => isIncomeRule(rule) && isActiveRule(rule) && rule.currency === "TWD")
         .reduce((sum, rule) => sum + getMonthlyAmount(rule), 0),
     [rules],
   );
+  const monthlyExpenseUsd = useMemo(
+    () => rules.filter((rule) => isExpenseRule(rule) && isActiveRule(rule) && rule.currency === "USD")
+      .reduce((sum, rule) => sum + getMonthlyAmount(rule), 0),
+    [rules],
+  );
+  const monthlyIncomeUsd = useMemo(
+    () => rules.filter((rule) => isIncomeRule(rule) && isActiveRule(rule) && rule.currency === "USD")
+      .reduce((sum, rule) => sum + getMonthlyAmount(rule), 0),
+    [rules],
+  );
   const monthlyNetFlow = monthlyIncomeTotal - monthlyExpenseTotal;
+  const monthlyNetFlowUsd = monthlyIncomeUsd - monthlyExpenseUsd;
 
   async function toggleRule(rule: RecurringRule) {
     if (updatingRuleId) return;
+    if (rule.currency === "USD" && !rule.enabled) {
+      setStatusMessage("美元規則已建立，但現有每日排程尚未支援美元，暫不可啟用自動記帳。");
+      return;
+    }
 
     const enabled = !rule.enabled;
     setUpdatingRuleId(rule.id);
@@ -554,6 +569,10 @@ export default function RecurringPage() {
       }
 
       const next = { ...current, [key]: value };
+      if (key === "currency" && value === "USD") {
+        next.enabled = false;
+        next.status = "paused";
+      }
 
       if (key === "type") {
         const nextType = String(value);
@@ -642,6 +661,7 @@ export default function RecurringPage() {
       if (current.enabled) {
         return { ...current, enabled: false, status: "paused" };
       }
+      if (current.currency === "USD") return current;
 
       return {
         ...current,
@@ -658,6 +678,10 @@ export default function RecurringPage() {
     event.preventDefault();
 
     if (!editingRule || saveInFlight.current) return;
+    if (editingRule.currency === "USD" && editingRule.enabled) {
+      setFormMessage("USD 規則需先升級每日自動排程才能啟用，目前僅可暫停儲存。");
+      return;
+    }
     const previousRule = rules.find((rule) => rule.id === editingRule.id);
     const validation = validateRecurringRule(editingRule, false, Boolean(previousRule && !previousRule.startDate));
     if (validation) { setFormMessage(validation); return; }
@@ -682,6 +706,7 @@ export default function RecurringPage() {
       categoryId:
         selectedCategory.id,
       amount: Number(editingRule.amount),
+      currency: editingRule.currency,
       frequency: editingRule.frequency,
       expenseType: isIncome ? "" : "固定",
       note: editingRule.note,
@@ -710,6 +735,7 @@ export default function RecurringPage() {
           category: nextRule.category,
           categoryId: nextRule.categoryId ?? "",
           amount: nextRule.amount,
+          currency: nextRule.currency,
           frequency: nextRule.frequency,
           startDate: nextRule.startDate,
           nextRunDate: nextRule.nextRunDate,
@@ -730,6 +756,7 @@ export default function RecurringPage() {
           category: nextRule.category,
           categoryId: nextRule.categoryId ?? "",
           amount: nextRule.amount,
+          currency: nextRule.currency,
           frequency: nextRule.frequency,
           startDate: nextRule.startDate,
           nextRunDate: nextRule.nextRunDate,
@@ -850,12 +877,14 @@ export default function RecurringPage() {
             <p className="mt-2 text-xl font-semibold text-rose-600">
               {formatMoney(monthlyExpenseTotal)}
             </p>
+            {monthlyExpenseUsd !== 0 ? <p className="mt-1 text-sm text-slate-500">{formatMoney(monthlyExpenseUsd, "USD")}（另計）</p> : null}
           </article>
           <article className="rounded-[28px] border border-white/75 bg-white/80 p-4 shadow-sm shadow-slate-200/80 backdrop-blur-xl">
             <p className="text-sm font-medium text-slate-500">每月固定收入</p>
             <p className="mt-2 text-xl font-semibold text-emerald-600">
               {formatMoney(monthlyIncomeTotal)}
             </p>
+            {monthlyIncomeUsd !== 0 ? <p className="mt-1 text-sm text-slate-500">{formatMoney(monthlyIncomeUsd, "USD")}（另計）</p> : null}
           </article>
           <article className="rounded-[28px] border border-white/75 bg-white/80 p-4 shadow-sm shadow-slate-200/80 backdrop-blur-xl">
             <p className="text-sm font-medium text-slate-500">
@@ -868,6 +897,7 @@ export default function RecurringPage() {
             >
               {formatMoney(monthlyNetFlow)}
             </p>
+            {monthlyNetFlowUsd !== 0 ? <p className="mt-1 text-sm text-slate-500">{formatMoney(monthlyNetFlowUsd, "USD")}（美元淨額）</p> : null}
           </article>
         </section>
 
@@ -947,7 +977,7 @@ export default function RecurringPage() {
                           ruleIsIncome ? "text-emerald-600" : "text-slate-950"
                         }`}
                       >
-                        {formatMoney(getMonthlyAmount(rule))}
+                        {formatMoney(getMonthlyAmount(rule), rule.currency)}
                       </p>
                     </div>
                     <div className="min-w-0 text-right">
@@ -957,7 +987,7 @@ export default function RecurringPage() {
                           ruleIsIncome ? "text-emerald-600" : "text-rose-600"
                         }`}
                       >
-                        {formatMoney(rule.amount)} / {formatFrequencyUnit(rule.frequency)}
+                        {formatMoney(rule.amount, rule.currency)} / {formatFrequencyUnit(rule.frequency)}
                       </p>
                       <p className="mt-1 text-xs font-medium text-slate-400">
                         {formatFrequency(rule.frequency)}
@@ -1209,19 +1239,33 @@ export default function RecurringPage() {
 
               <div className="grid gap-3">
                 <div className="grid gap-2">
-                  <span className="text-sm font-medium text-slate-500">金額</span>
+                  <label className="grid gap-2">
+                    <span className="text-sm font-medium text-slate-500">幣別</span>
+                    <select
+                      aria-label="固定收支幣別"
+                      value={editingRule.currency}
+                      onChange={(event) => updateEditingRule("currency", event.target.value as FinanceCurrency)}
+                      className="h-12 rounded-[20px] bg-slate-50 px-4 text-base font-medium outline-none focus:bg-white focus:ring-2 focus:ring-slate-200"
+                    >
+                      <option value="TWD">台幣 TWD</option>
+                      <option value="USD">美金 USD</option>
+                    </select>
+                  </label>
+                  <div className="grid gap-2">
+                    <span className="text-sm font-medium text-slate-500">金額</span>
                   <button
                     type="button"
                     onClick={() => setAmountKeyboardOpen(true)}
                     className="flex min-h-20 items-center justify-between rounded-[24px] bg-slate-50 px-4 text-left transition active:scale-[0.99]"
                   >
                     <span className="text-xl font-semibold text-slate-400">
-                      NT$
+                      {editingRule.currency === "USD" ? "US$" : "NT$"}
                     </span>
                     <span className="min-w-0 flex-1 truncate text-right text-4xl font-semibold tracking-normal text-slate-950">
                       {formatAmountDisplay(editingRule.amount)}
                     </span>
                   </button>
+                  </div>
                 </div>
 
                 <label className="grid gap-2">
@@ -1327,7 +1371,9 @@ export default function RecurringPage() {
                     啟用狀態
                   </p>
                   <p className="mt-1 text-xs font-medium text-slate-400">
-                    停用只會暫停規則，不會產生交易或回溯補記
+                    {editingRule.currency === "USD"
+                      ? "美元規則暫不自動記帳，需待每日排程支援 USD 後才能啟用"
+                      : "停用只會暫停規則，不會產生交易或回溯補記"}
                   </p>
                 </div>
                 <button
