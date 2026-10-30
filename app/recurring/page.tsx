@@ -5,6 +5,7 @@ import Link from "next/link";
 import { ChevronDown, ChevronUp, Pencil, Trash2 } from "lucide-react";
 import { useCategories } from "../categories-context";
 import { formatCategoryLabel } from "../lib/categories";
+import { formatFinanceMoney, normalizeFinanceCurrency, type FinanceCurrency } from "../lib/transactions";
 import { addPeriod, validateRecurringRule } from "../lib/recurringDates";
 import { normalizeBoolean } from "../lib/boolean";
 import {
@@ -24,6 +25,7 @@ type RecurringRule = {
   categoryId?: string;
   category: string;
   amount: number;
+  currency: FinanceCurrency;
   frequency: string;
   expenseType: string;
   note: string;
@@ -55,6 +57,7 @@ const emptyForm: RuleForm = {
   necessity: "必要",
   category: "住房",
   amount: "",
+  currency: "TWD",
   frequency: "monthly",
   expenseType: "固定",
   note: "",
@@ -76,12 +79,8 @@ function isIncomeRule(rule: { type: string }) {
   return rule.type === "收入";
 }
 
-function formatMoney(value: number) {
-  return new Intl.NumberFormat("zh-TW", {
-    style: "currency",
-    currency: "TWD",
-    maximumFractionDigits: 0,
-  }).format(value);
+function formatMoney(value: number, currency: FinanceCurrency = "TWD") {
+  return formatFinanceMoney(value, currency);
 }
 
 function formatFrequency(value: string) {
@@ -260,6 +259,7 @@ function normalizeRecurringRule(
       rule.categoryId === undefined ? undefined : String(rule.categoryId),
     category: String(rule.category ?? ""),
     amount: Number.isFinite(amount) ? amount : 0,
+    currency: normalizeFinanceCurrency(rule.currency),
     frequency,
     expenseType: String(rule.expenseType ?? "固定"),
     note: String(rule.note ?? rule.memo ?? rule.description ?? ""),
@@ -682,6 +682,7 @@ export default function RecurringPage() {
       categoryId:
         selectedCategory.id,
       amount: Number(editingRule.amount),
+      currency: editingRule.currency,
       frequency: editingRule.frequency,
       expenseType: isIncome ? "" : "固定",
       note: editingRule.note,
@@ -710,6 +711,7 @@ export default function RecurringPage() {
           category: nextRule.category,
           categoryId: nextRule.categoryId ?? "",
           amount: nextRule.amount,
+          currency: nextRule.currency,
           frequency: nextRule.frequency,
           startDate: nextRule.startDate,
           nextRunDate: nextRule.nextRunDate,
@@ -730,6 +732,7 @@ export default function RecurringPage() {
           category: nextRule.category,
           categoryId: nextRule.categoryId ?? "",
           amount: nextRule.amount,
+          currency: nextRule.currency,
           frequency: nextRule.frequency,
           startDate: nextRule.startDate,
           nextRunDate: nextRule.nextRunDate,
