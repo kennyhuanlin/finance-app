@@ -489,6 +489,10 @@ export default function RecurringPage() {
 
   async function toggleRule(rule: RecurringRule) {
     if (updatingRuleId) return;
+    if (rule.currency === "USD" && !rule.enabled) {
+      setStatusMessage("美元規則已建立，但現有每日排程尚未支援美元，暫不可啟用自動記帳。");
+      return;
+    }
 
     const enabled = !rule.enabled;
     setUpdatingRuleId(rule.id);
@@ -565,6 +569,10 @@ export default function RecurringPage() {
       }
 
       const next = { ...current, [key]: value };
+      if (key === "currency" && value === "USD") {
+        next.enabled = false;
+        next.status = "paused";
+      }
 
       if (key === "type") {
         const nextType = String(value);
@@ -653,6 +661,7 @@ export default function RecurringPage() {
       if (current.enabled) {
         return { ...current, enabled: false, status: "paused" };
       }
+      if (current.currency === "USD") return current;
 
       return {
         ...current,
@@ -669,6 +678,10 @@ export default function RecurringPage() {
     event.preventDefault();
 
     if (!editingRule || saveInFlight.current) return;
+    if (editingRule.currency === "USD" && editingRule.enabled) {
+      setFormMessage("USD 規則需先升級每日自動排程才能啟用，目前僅可暫停儲存。");
+      return;
+    }
     const previousRule = rules.find((rule) => rule.id === editingRule.id);
     const validation = validateRecurringRule(editingRule, false, Boolean(previousRule && !previousRule.startDate));
     if (validation) { setFormMessage(validation); return; }
@@ -1358,7 +1371,9 @@ export default function RecurringPage() {
                     啟用狀態
                   </p>
                   <p className="mt-1 text-xs font-medium text-slate-400">
-                    停用只會暫停規則，不會產生交易或回溯補記
+                    {editingRule.currency === "USD"
+                      ? "美元規則暫不自動記帳，需待每日排程支援 USD 後才能啟用"
+                      : "停用只會暫停規則，不會產生交易或回溯補記"}
                   </p>
                 </div>
                 <button
