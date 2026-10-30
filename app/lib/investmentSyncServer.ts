@@ -105,8 +105,19 @@ const generatedRelatedTypes = new Set([
   "dividend_record",
 ]);
 
+function requireStableIds(rows: Record<string, unknown>[], sheet: string) {
+  const seen = new Set<string>();
+  for (const row of rows) {
+    const id = String(row.id ?? "").trim();
+    if (!id || seen.has(id)) throw new Error(`${sheet} contains missing or duplicate IDs; sync stopped before replacement`);
+    seen.add(id);
+  }
+}
+
 export async function refreshInvestmentPositions() {
-  const trades = (await readWorksheetCached("investment_trades")).map(trade);
+  const rows = await readWorksheetCached("investment_trades");
+  requireStableIds(rows, "investment_trades");
+  const trades = rows.map(trade);
   const positions = calculatePositions(trades).map((position) => ({
     ...position,
     updatedAt: new Date().toISOString(),
@@ -125,6 +136,10 @@ export async function refreshCashAccounts() {
       readWorksheetCached("dividend_records"),
     ]);
   const accounts = accountRows.map(account);
+  for (const [sheet, rows] of [
+    ["cash_accounts", accountRows], ["cash_ledger", ledgerRows],
+    ["investment_trades", tradeRows], ["fx_records", fxRows], ["dividend_records", dividendRows],
+  ] as const) requireStableIds(rows, sheet);
   const dividends = dividendRows.map((row) => {
     const grossAmount = number(firstValue(row.grossAmount, row.amount));
     const tax = number(row.tax);
@@ -304,6 +319,7 @@ export async function refreshCashAccounts() {
     updatedAt: now,
   }));
 
+  if (missingCurrencies.size) throw new Error(`Cash accounts missing for ${[...missingCurrencies].join(", ")}; sync stopped before replacement`);
   await replaceWorksheetRows("cash_ledger", allLedger);
   await replaceWorksheetRows("cash_accounts", nextAccounts);
   return {

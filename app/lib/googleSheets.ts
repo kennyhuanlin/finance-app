@@ -104,16 +104,14 @@ async function requestSheet<T>(sheet: SheetName): Promise<T[]> {
     );
   }
 
-  const data = (await response.json().catch(() => [])) as
+  const data = (await response.json().catch(() => null)) as
     | T[]
     | { data?: T[] }
     | null;
 
-  return Array.isArray(data)
-    ? data
-    : Array.isArray(data?.data)
-      ? data.data
-      : [];
+  if (Array.isArray(data)) return data;
+  if (Array.isArray(data?.data)) return data.data;
+  throw new SheetRequestError(sheet, 502, "資料服務回傳無效內容，請稍後重試");
 }
 
 async function createSheetRow<T extends Record<string, unknown>>(
@@ -138,10 +136,12 @@ async function mutateSheetRow<T extends Record<string, unknown>>(
 
   const body = (await response.json().catch(() => null)) as {
       error?: string;
+      ok?: boolean;
+      success?: boolean;
       resource?: string;
       id?: string;
     } | null;
-  if (!response.ok || body?.error) {
+  if (!response.ok || body?.error || (!body?.ok && !body?.success)) {
     throw new SheetRequestError(
       sheet,
       response.status,

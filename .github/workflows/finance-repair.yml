@@ -1,0 +1,48 @@
+name: Finance repair isolation
+on:
+  pull_request:
+    branches: [main]
+permissions:
+  contents: read
+concurrency:
+  group: finance-repair-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+jobs:
+  regression:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      NEXT_TELEMETRY_DISABLED: '1'
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24'
+      - name: Install locked dependencies without lifecycle scripts
+        run: npm ci --ignore-scripts --no-fund --no-audit
+      - name: Save reviewed dependency candidate
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: finance-patched-dependency-candidate
+          path: |
+            package.json
+            package-lock.json
+          retention-days: 7
+      - run: npm test
+      - run: npx tsc --noEmit --incremental false
+      - run: npm run lint
+      - name: Install isolated browser runner
+        run: npm install --no-save --ignore-scripts --no-audit --no-fund playwright@1.58.2
+      - run: npx playwright install --with-deps chromium
+      - run: node tests/browser-flow.cjs
+      - name: Save isolated mobile browser evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: finance-mobile-synthetic-evidence
+          path: test-results/*.png
+          if-no-files-found: ignore
+          retention-days: 7
+      - run: npm run build -- --webpack

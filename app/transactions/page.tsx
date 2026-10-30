@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useEffect, useMemo, useState } from "react";
+import { Suspense, useEffect, useMemo, useState, useRef } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useCategories } from "../categories-context";
@@ -261,6 +261,8 @@ function TransactionsContent() {
     [categories],
   );
   const [transactions, setTransactions] = useState<Transaction[]>([]);
+  const saveInFlight = useRef(false);
+  const [formMessage, setFormMessage] = useState("");
   const [editingTransaction, setEditingTransaction] =
     useState<TransactionForm | null>(null);
   const [calculatorOpen, setCalculatorOpen] = useState(false);
@@ -323,8 +325,7 @@ function TransactionsContent() {
       : expenseCategories;
   const selectedEditingCategory = editingTransaction?.type === "transfer"
     ? undefined
-    : categoryOptions.find((item) => item.name === editingTransaction?.category) ??
-      (categoriesReady ? categoryOptions[0] : undefined);
+    : categoryOptions.find((item) => item.name === editingTransaction?.category);
   const periodFilter = normalizePeriodFilter(periodParam);
   const periodRange = getDateRange(periodFilter);
   const periodRangeStart = periodRange?.start ?? null;
@@ -398,20 +399,7 @@ function TransactionsContent() {
     "recurringIncomeTransactions.length": recurringIncomeTransactions.length,
     "recurringExpenseTransactions.length": recurringExpenseTransactions.length,
   });
-  console.log(
-    "transactions period date debug",
-    transactions.map((transaction) => {
-      const normalizedDate = normalizeDate(transaction.date);
 
-      return {
-        rawDate: transaction.date,
-        normalizedDate,
-        includedInPeriod: periodRangeStart && periodRangeEnd
-          ? normalizedDate >= periodRangeStart && normalizedDate <= periodRangeEnd
-          : true,
-      };
-    }),
-  );
 
   function openEditForm(transaction: Transaction) {
     if (transaction.sourceType === "recurring") {
@@ -420,6 +408,7 @@ function TransactionsContent() {
     }
 
     setMessage("");
+    setFormMessage("");
     setEditingTransaction({
       ...transaction,
       necessity: isExpenseTransaction(transaction)
@@ -444,6 +433,7 @@ function TransactionsContent() {
         ? incomeCategories[0]
         : expenseCategories[0];
     setMessage("");
+    setFormMessage("");
     setEditingTransaction({
       id: "",
       date: toDateKey(new Date()),
@@ -524,15 +514,15 @@ function TransactionsContent() {
   async function saveTransaction(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
-    if (
-      !editingTransaction ||
-      Number(editingTransaction.amount) <= 0 ||
-      (editingTransaction.type !== "transfer" &&
-        (!categoriesReady || !selectedEditingCategory)) ||
-      isSavingTransaction
-    ) {
-      return;
+    if (!editingTransaction || saveInFlight.current) return;
+    if (!Number.isFinite(Number(editingTransaction.amount)) || Number(editingTransaction.amount) <= 0) {
+      setFormMessage("請輸入大於 0 的有效金額"); return;
     }
+    if (editingTransaction.type !== "transfer" && (!categoriesReady || !selectedEditingCategory)) {
+      setFormMessage("請等待分類載入並選擇有效分類"); return;
+    }
+    saveInFlight.current = true;
+    setFormMessage("");
 
     const isExpense =
       editingTransaction.type === "支出" ||
@@ -582,12 +572,15 @@ function TransactionsContent() {
       } else {
         await updateTransaction(nextTransaction.id, sheetPayload);
       }
-      await fetchTransactions();
       closeTransactionForm();
+      try { await fetchTransactions(); } catch {
+        setMessage("交易已儲存，但列表更新失敗，請重新整理"); return;
+      }
       setMessage(isCreating ? "交易已新增" : "交易已儲存");
-    } catch {
-      setMessage("交易儲存失敗，請稍後再試");
+    } catch (error) {
+      setFormMessage(`交易儲存失敗：${error instanceof Error ? error.message : "請稍後再試"}`);
     } finally {
+      saveInFlight.current = false;
       setIsSavingTransaction(false);
     }
   }
@@ -800,6 +793,10 @@ function TransactionsContent() {
         <div className="fixed inset-0 z-[60] flex items-center overflow-y-auto bg-slate-950/30 p-3 backdrop-blur-sm">
           <form
             onSubmit={saveTransaction}
+            noValidate
+            role="dialog"
+            aria-modal="true"
+            aria-label="交易表單"
             className="mx-auto max-h-full w-full max-w-xl overflow-y-auto overscroll-contain rounded-[32px] border border-white/80 bg-white p-5 shadow-2xl shadow-slate-950/20 [-webkit-overflow-scrolling:touch]"
           >
             <div className="mb-5 flex items-center justify-between gap-4">
@@ -812,6 +809,7 @@ function TransactionsContent() {
               <button
                 type="button"
                 onClick={closeTransactionForm}
+                disabled={isSavingTransaction}
                 className="grid h-10 w-10 place-items-center rounded-full bg-slate-100 text-lg font-semibold text-slate-500"
                 aria-label="關閉"
               >
@@ -821,7 +819,8 @@ function TransactionsContent() {
 
             <div className="grid gap-3">
               <div className="grid grid-cols-2 gap-3">
-                <label className="grid gap-2">
+                {formMessage ? <p role="alert" className="rounded-2xl bg-rose-50 p-3 text-sm text-rose-700">{formMessage}</p> : null}
+              <label className="grid gap-2">
                   <span className="text-sm font-medium text-slate-500">日期</span>
                   <input
                     type="date"
