@@ -1,3 +1,28 @@
+export type FinanceCurrency = "TWD" | "USD";
+
+export function normalizeFinanceCurrency(value: unknown): FinanceCurrency {
+  return String(value ?? "").toUpperCase() === "USD" ? "USD" : "TWD";
+}
+
+export function formatFinanceMoney(value: number, currency: FinanceCurrency = "TWD") {
+  return new Intl.NumberFormat("zh-TW", {
+    style: "currency",
+    currency,
+    maximumFractionDigits: currency === "USD" ? 2 : 0,
+  }).format(value);
+}
+
+export function sumAmountsByCurrency(
+  rows: readonly { amount: number; currency?: unknown }[],
+  currency: FinanceCurrency,
+) {
+  return rows.reduce(
+    (sum, item) =>
+      sum + (normalizeFinanceCurrency(item.currency) === currency && Number.isFinite(item.amount) ? item.amount : 0),
+    0,
+  );
+}
+
 export type TransactionDisplayFields = {
   note?: unknown;
   memo?: unknown;
@@ -12,6 +37,7 @@ export type Transaction = {
   category: string;
   categoryId?: string;
   amount: number;
+  currency?: FinanceCurrency;
   note: string;
   memo?: string;
   account?: string;
@@ -110,6 +136,7 @@ export function normalizeTransaction(
         ? undefined
         : String(transaction.categoryId),
     amount: Number(transaction.amount ?? 0),
+    currency: normalizeFinanceCurrency(transaction.currency),
     note: String(transaction.note ?? ""),
     memo:
       transaction.memo === undefined ? undefined : String(transaction.memo),
