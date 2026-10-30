@@ -40,26 +40,35 @@ test('legacy edits allow only missing start dates; new rules and malformed dates
  assert.ok(validateRecurringRule({...validRule,startDate:'',nextRunDate:''},false,true));
 });
 for(const patch of [{name:' '},{category:''},{amount:0},{amount:NaN},{amount:Infinity},{remainingCount:'-1'},{remainingCount:'1.2'},{startDate:'2026-02-30'},{nextRunDate:''},{endDate:'2025-12-31'},{frequency:'bogus'}]) test(`invalid recurring ${JSON.stringify(patch)}`,()=>assert.ok(validateRecurringRule({...validRule,...patch})));
-test('auth fail-closed, exact credential and CSRF checks',()=>{
- assert.equal(requireFinanceAccess(request()),null);
- assert.equal(requireFinanceAccess(request('', 'GET',undefined,{authorization:''})).status,401);
- assert.equal(requireFinanceAccess(request('', 'GET',undefined,{authorization:'Basic abc='})).status,401);
- assert.equal(requireFinanceAccess(request('', 'POST',{}, {origin:'https://attacker.invalid'})).status,403);
- assert.equal(requireFinanceAccess(request('', 'POST',{}, {origin:''})).status,403);
- assert.equal(requireFinanceAccess(request('', 'POST',{}, {'content-type':'text/plain'})).status,415);
- const saved=process.env.FINANCE_APP_PASSWORD; delete process.env.FINANCE_APP_PASSWORD;
- assert.equal(requireFinanceAccess(request()).status,503); process.env.FINANCE_APP_PASSWORD=saved;
+test('passwordless reads and same-origin mutation guards',()=>{
+ const savedUser=process.env.FINANCE_APP_USERNAME;
+ const savedPass=process.env.FINANCE_APP_PASSWORD;
+ delete process.env.FINANCE_APP_USERNAME;
+ delete process.env.FINANCE_APP_PASSWORD;
+ try {
+  assert.equal(requireFinanceAccess(request('', 'GET',undefined,{authorization:''})),null);
+  assert.equal(requireFinanceAccess(request('', 'GET',undefined,{authorization:'Basic invalid'})),null);
+  assert.equal(requireFinanceAccess(request('', 'POST',{}, {authorization:''})),null);
+  assert.equal(requireFinanceAccess(request('', 'POST',{}, {origin:'https://attacker.invalid'})).status,403);
+  assert.equal(requireFinanceAccess(request('', 'POST',{}, {origin:''})).status,403);
+  assert.equal(requireFinanceAccess(request('', 'POST',{}, {'content-type':'text/plain'})).status,415);
+ } finally {
+  if(savedUser===undefined) delete process.env.FINANCE_APP_USERNAME;
+  else process.env.FINANCE_APP_USERNAME=savedUser;
+  if(savedPass===undefined) delete process.env.FINANCE_APP_PASSWORD;
+  else process.env.FINANCE_APP_PASSWORD=savedPass;
+ }
 });
-test('all route handlers refuse unauthenticated requests before any network activity',async()=>{
+test('mutation APIs reject cross-origin requests before data access',async()=>{
  for(const [path,method,context] of [
- ['../app/api/google/[resource]/route.ts','GET',{params:Promise.resolve({resource:'recurring'})}],
- ['../app/api/google/[resource]/route.ts','POST',{params:Promise.resolve({resource:'recurring'})}],
- ['../app/api/google/[resource]/route.ts','PUT',{params:Promise.resolve({resource:'recurring'})}],
- ['../app/api/google/[resource]/route.ts','DELETE',{params:Promise.resolve({resource:'recurring'})}],
- ['../app/api/google/investments/route.ts','GET'],['../app/api/google/investments/prices/route.ts','GET'],
- ['../app/api/google/investments/prices/route.ts','POST'],['../app/api/google/investments/sync/route.ts','POST'],
- ['../app/api/sheets/route.ts','GET'],['../app/api/sheets/route.ts','POST']]) {
-  const response=await require(path)[method](request('',method,method==='GET'?undefined:{},{authorization:''}),context);assert.equal(response.status,401,`${path} ${method}`);
+  ['../app/api/google/[resource]/route.ts','POST',{params:Promise.resolve({resource:'recurring'})}],
+  ['../app/api/google/[resource]/route.ts','PUT',{params:Promise.resolve({resource:'recurring'})}],
+  ['../app/api/google/[resource]/route.ts','DELETE',{params:Promise.resolve({resource:'recurring'})}],
+  ['../app/api/google/investments/prices/route.ts','POST'],
+  ['../app/api/google/investments/sync/route.ts','POST'],
+  ['../app/api/sheets/route.ts','POST']]) {
+  const response=await require(path)[method](request('',method,{}, {authorization:'',origin:'https://attacker.invalid'}),context);
+  assert.equal(response.status,403,`${path} ${method}`);
  }
 });
 test('service-account recurring CRUD and investment GET have no read-side writes',async()=>{
