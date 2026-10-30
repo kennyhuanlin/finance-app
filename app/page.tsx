@@ -8,6 +8,9 @@ import { transactions } from "./data";
 import { getTransactions } from "./lib/googleSheets";
 import {
   formatTransactionDate,
+  formatFinanceMoney,
+  normalizeFinanceCurrency,
+  sumAmountsByCurrency,
   getTransactionDisplayName,
   isExpenseTransaction,
   isIncomeTransaction,
@@ -170,21 +173,23 @@ function filterTransactionsByPeriod(
 }
 
 function calculateSummary(sourceTransactions: Transaction[]) {
-  const income = sourceTransactions
-    .filter(isIncomeTransaction)
-    .reduce((sum, transaction) => sum + Number(transaction.amount), 0);
-  const expense = sourceTransactions
-    .filter(isExpenseTransaction)
-    .reduce((sum, transaction) => sum + Number(transaction.amount), 0);
-  const fixedExpense = sourceTransactions
-    .filter(isRecurringExpenseTransaction)
-    .reduce((sum, transaction) => sum + Number(transaction.amount), 0);
+  const incomeRows = sourceTransactions.filter(isIncomeTransaction);
+  const expenseRows = sourceTransactions.filter(isExpenseTransaction);
+  const fixedRows = sourceTransactions.filter(isRecurringExpenseTransaction);
+  const income = sumAmountsByCurrency(incomeRows, "TWD");
+  const expense = sumAmountsByCurrency(expenseRows, "TWD");
+  const usdIncome = sumAmountsByCurrency(incomeRows, "USD");
+  const usdExpense = sumAmountsByCurrency(expenseRows, "USD");
 
   return {
     income,
     expense,
     balance: income - expense,
-    fixedExpense,
+    fixedExpense: sumAmountsByCurrency(fixedRows, "TWD"),
+    usdIncome,
+    usdExpense,
+    usdBalance: usdIncome - usdExpense,
+    usdFixedExpense: sumAmountsByCurrency(fixedRows, "USD"),
   };
 }
 
@@ -480,18 +485,20 @@ export default function Home() {
 
   const expenseCategories = sourceCategories
     .filter((category) => category.type === "expense")
-    .map((category) => ({
-      ...category,
-      amount: monthTransactions
-        .filter(
-          (transaction) =>
-            isExpenseTransaction(transaction) &&
-            (transaction.categoryId === category.id ||
-              transaction.category === category.name),
-        )
-        .reduce((sum, transaction) => sum + transaction.amount, 0),
-    }))
-    .filter((category) => category.amount > 0);
+    .map((category) => {
+      const rows = monthTransactions.filter(
+        (transaction) =>
+          isExpenseTransaction(transaction) &&
+          (transaction.categoryId === category.id ||
+            transaction.category === category.name),
+      );
+      return {
+        ...category,
+        amount: sumAmountsByCurrency(rows, "TWD"),
+        usdAmount: sumAmountsByCurrency(rows, "USD"),
+      };
+    })
+    .filter((category) => category.amount > 0 || category.usdAmount > 0);
 
   const totalCategoryExpense = expenseCategories.reduce(
     (sum, item) => sum + item.amount,
@@ -603,6 +610,13 @@ export default function Home() {
                     ? "Loading..."
                     : formatMoney(activeSummary[item.key])}
                 </p>
+                {transactionsLoadState === "success" && (() => {
+                  const usd = item.key === "income" ? activeSummary.usdIncome
+                    : item.key === "expense" ? activeSummary.usdExpense
+                    : item.key === "balance" ? activeSummary.usdBalance
+                    : activeSummary.usdFixedExpense;
+                  return usd !== 0 ? <p className="mt-1 text-xs font-medium text-slate-500">{formatFinanceMoney(usd, "USD")}（另計）</p> : null;
+                })()}
             </article>
           ))}
         </section>
