@@ -5,7 +5,10 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { useCategories } from "./categories-context";
 import { transactions } from "./data";
-import { getTransactions } from "./lib/googleSheets";
+import { getRecurringRules, getTransactions } from "./lib/googleSheets";
+import { amortizePeriodicTransactions, type AmortizableRule } from "./lib/amortization";
+import { useExpenseView } from "./lib/useExpenseView";
+import { ExpenseViewToggle } from "./ui/expense-view-toggle";
 import {
   formatTransactionDate,
   formatFinanceMoney,
@@ -434,6 +437,29 @@ export default function Home() {
   const [activePeriod, setActivePeriod] =
     useState<(typeof periods)[number]>("本月");
   const [selectedMonth, setSelectedMonth] = useState(normalizeMonth());
+  const [periodicRules, setPeriodicRules] = useState<AmortizableRule[] | null>(null);
+  const [expenseView, setExpenseView] = useExpenseView();
+
+  useEffect(() => {
+    let isMounted = true;
+
+    getRecurringRules<Record<string, unknown>>()
+      .then((rules) => {
+        if (isMounted) {
+          setPeriodicRules(
+            rules.map((rule) => ({ id: String(rule.id ?? ""), frequency: String(rule.frequency ?? "") })),
+          );
+        }
+      })
+      .catch(() => {
+        // Without rules nothing can be amortized; statistics fall back to actual payments.
+        if (isMounted) setPeriodicRules([]);
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
 
   useEffect(() => {
     let isMounted = true;
@@ -470,16 +496,25 @@ export default function Home() {
 
   const activePeriodTitle = formatPeriodTitle(activePeriod);
   const isCumulative = activePeriod === "累積餘額";
-  const filteredTransactions = filterTransactionsByPeriod(
+  // 月化 spreads yearly/quarterly payments over the following months; the
+  // cumulative balance and the transaction list always use actual payments.
+  const statsTransactions =
+    expenseView === "amortized" && periodicRules
+      ? amortizePeriodicTransactions(sourceTransactions, periodicRules, toDateKey(new Date()))
+      : sourceTransactions;
+  const actualPeriodTransactions = filterTransactionsByPeriod(
     sourceTransactions,
     activePeriod,
   );
+  const filteredTransactions = isCumulative
+    ? actualPeriodTransactions
+    : filterTransactionsByPeriod(statsTransactions, activePeriod);
   const activeSummary = calculateSummary(filteredTransactions);
-  const recentTransactions = [...filteredTransactions].sort((a, b) =>
+  const recentTransactions = [...actualPeriodTransactions].sort((a, b) =>
     (b.createdAt || b.date).localeCompare(a.createdAt || a.date),
   ).slice(0, 5);
   const selectedMonthRange = getMonthDateRange(selectedMonth);
-  const monthTransactions = sourceTransactions.filter((transaction) =>
+  const monthTransactions = statsTransactions.filter((transaction) =>
     isTransactionInDateRange(transaction, selectedMonthRange),
   );
 
@@ -563,6 +598,17 @@ export default function Home() {
               </button>
             ))}
           </div>
+          <ExpenseViewToggle
+            view={expenseView}
+            onChange={setExpenseView}
+            note={
+              isCumulative
+                ? "累積餘額一律以實際付款計算"
+                : expenseView === "amortized"
+                  ? "年付／季付平均攤到付款後的每個月"
+                  : "依實際付款日計算"
+            }
+          />
         </header>
 
         {transactionsLoadState === "loading" ? (

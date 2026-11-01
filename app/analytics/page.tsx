@@ -3,7 +3,10 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useCategories } from "../categories-context";
-import { getTransactions } from "../lib/googleSheets";
+import { getRecurringRules, getTransactions } from "../lib/googleSheets";
+import { amortizePeriodicTransactions, type AmortizableRule } from "../lib/amortization";
+import { useExpenseView } from "../lib/useExpenseView";
+import { ExpenseViewToggle } from "../ui/expense-view-toggle";
 
 const periods = ["本月", "上月", "本季", "今年", "累積餘額"] as const;
 type Period = (typeof periods)[number];
@@ -493,7 +496,7 @@ function TrendCard({
       <h3 className="text-sm font-semibold text-slate-500">{title}</h3>
       <div className="mt-4 flex h-28 items-end gap-2">
         {data.map((item) => (
-          <div key={item.label} className="flex flex-1 flex-col items-center gap-2">
+          <div key={item.label} className="flex h-full flex-1 flex-col items-center justify-end gap-2">
             <div
               className="w-full rounded-t-xl"
               style={{
@@ -547,6 +550,28 @@ export default function AnalyticsPage() {
   const { categories } = useCategories();
   const [activePeriod, setActivePeriod] = useState<Period>("本月");
   const [transactions, setTransactions] = useState<Transaction[]>([]);
+  const [periodicRules, setPeriodicRules] = useState<AmortizableRule[] | null>(null);
+  const [expenseView, setExpenseView] = useExpenseView();
+
+  useEffect(() => {
+    let isMounted = true;
+
+    getRecurringRules<Record<string, unknown>>()
+      .then((rules) => {
+        if (isMounted) {
+          setPeriodicRules(
+            rules.map((rule) => ({ id: String(rule.id ?? ""), frequency: String(rule.frequency ?? "") })),
+          );
+        }
+      })
+      .catch(() => {
+        if (isMounted) setPeriodicRules([]);
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
 
   useEffect(() => {
     let isMounted = true;
@@ -574,8 +599,13 @@ export default function AnalyticsPage() {
     };
   }, []);
 
+  const isCumulative = activePeriod === "累積餘額";
+  const statsTransactions =
+    expenseView === "amortized" && periodicRules && !isCumulative
+      ? amortizePeriodicTransactions(transactions, periodicRules, toDateKey(new Date()))
+      : transactions;
   const filteredTransactions = filterTransactionsByPeriod(
-    transactions,
+    statsTransactions,
     activePeriod,
   );
   const summary = calculateSummary(filteredTransactions, categories);
@@ -660,6 +690,17 @@ export default function AnalyticsPage() {
             </button>
           ))}
         </div>
+        <ExpenseViewToggle
+          view={expenseView}
+          onChange={setExpenseView}
+          note={
+            isCumulative
+              ? "累積餘額一律以實際付款計算"
+              : expenseView === "amortized"
+                ? "年付／季付平均攤到付款後的每個月"
+                : "依實際付款日計算"
+          }
+        />
 
         <section className="grid grid-cols-2 gap-3">
           {kpis.map((item) => (
