@@ -1394,7 +1394,7 @@ export default function RecurringPage() {
                   </p>
                   <p className="mt-1 text-xs font-medium text-slate-400">
                     {editingRule.currency === "USD"
-                      ? "目前僅可啟用已驗收的 Supabase US$26.25 規則，並保留未到期的每月25日"
+                      ? "其他美元規則暫不自動記帳；目前僅可啟用已驗收的 Supabase US$26.25 規則，並保留未到期的每月25日"
                       : "停用只會暫停規則，不會產生交易或回溯補記"}
                   </p>
                 </div>
