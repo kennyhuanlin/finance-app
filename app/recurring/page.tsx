@@ -474,6 +474,17 @@ export default function RecurringPage() {
     () => projectRecurringCashflow(twdExpenseRules, todayDateOnly(), 12),
     [twdExpenseRules],
   );
+  const [showAllCashflowMonths, setShowAllCashflowMonths] = useState(false);
+  const cashflowRows = cashflowMonths.map((entry, index) => ({
+    ...entry,
+    isCurrentMonth: index === 0,
+    isPeak: entry.total > expenseBudget.total + 0.5,
+    isUpcoming: index < 3,
+  }));
+  const visibleCashflowRows = showAllCashflowMonths
+    ? cashflowRows
+    : cashflowRows.filter((row) => row.isUpcoming || row.isPeak);
+  const hiddenCashflowCount = cashflowRows.length - visibleCashflowRows.length;
   const monthlyNetFlow = monthlyIncomeTotal - monthlyExpenseTotal;
   const monthlyNetFlowUsd = monthlyIncomeUsd - monthlyExpenseUsd;
 
@@ -919,43 +930,40 @@ export default function RecurringPage() {
             className="rounded-[32px] border border-white/75 bg-white/80 p-5 shadow-sm shadow-slate-200/80 backdrop-blur-xl"
           >
             <p className="text-sm font-medium text-slate-500">現金流規劃（台幣）</p>
-            <div className="mt-3 grid gap-3 sm:grid-cols-3">
-              <div className="rounded-2xl bg-white/75 p-4">
-                <p className="text-sm font-medium text-slate-500">每月實際扣款</p>
+            <div className="mt-3 grid grid-cols-[1fr_auto_1fr] items-center gap-2 rounded-2xl bg-slate-50 p-4">
+              <div className="min-w-0">
+                <p className="text-xs font-medium text-slate-500">每月扣款</p>
                 <p className="mt-1 text-lg font-semibold text-slate-950">{formatMoney(expenseBudget.everyMonth)}</p>
-                <p className="mt-1 text-xs text-slate-400">每日、每週、每月規則</p>
               </div>
-              <div className="rounded-2xl bg-white/75 p-4">
-                <p className="text-sm font-medium text-slate-500">年付／季付分攤</p>
+              <span aria-hidden="true" className="text-lg font-semibold text-slate-400">+</span>
+              <div className="min-w-0 text-right">
+                <p className="text-xs font-medium text-slate-500">年付分攤</p>
                 <p className="mt-1 text-lg font-semibold text-amber-600">{formatMoney(expenseBudget.reserve)}</p>
-                <p className="mt-1 text-xs text-slate-400">建議每月預留</p>
-              </div>
-              <div className="rounded-2xl bg-white/75 p-4">
-                <p className="text-sm font-medium text-slate-500">月化合計</p>
-                <p className="mt-1 text-lg font-semibold text-rose-600">{formatMoney(expenseBudget.total)}</p>
-                <p className="mt-1 text-xs text-slate-400">每月應準備的平均金額</p>
+                <p className="text-xs text-slate-400">建議每月預留</p>
               </div>
             </div>
+            <p className="mt-2 text-xs text-slate-500">
+              = 月化合計 {formatMoney(expenseBudget.total)}（即上方「每月固定支出」）
+            </p>
 
             <h3 className="mt-5 text-base font-semibold">未來 12 個月扣款預估</h3>
-            <p className="mt-1 text-xs text-slate-400">依目前啟用規則的下次執行日推算，含結束日期與剩餘期數；不含美元規則與一般記帳。</p>
+            <p className="mt-1 text-xs text-slate-400">依啟用規則的下次執行日推算，含結束日期與剩餘期數；不含美元規則與一般記帳。</p>
             <ul className="mt-3 grid gap-2">
-              {cashflowMonths.map((entry, index) => {
-                const [year, month] = entry.month.split("-");
-                const isPeak = entry.total > expenseBudget.total + 0.5;
-                const lumpItems = entry.items.filter((item) => item.frequency === "quarterly" || item.frequency === "yearly");
+              {visibleCashflowRows.map((row) => {
+                const [year, month] = row.month.split("-");
+                const lumpItems = row.items.filter((item) => item.frequency === "quarterly" || item.frequency === "yearly");
                 return (
                   <li
-                    key={entry.month}
-                    data-month={entry.month}
-                    className={`rounded-2xl px-4 py-3 ${isPeak ? "bg-amber-50" : "bg-white/75"}`}
+                    key={row.month}
+                    data-month={row.month}
+                    className={`rounded-2xl px-4 py-3 ${row.isPeak ? "bg-amber-50" : "bg-slate-50"}`}
                   >
                     <div className="flex items-center justify-between gap-3">
                       <span className="text-sm font-medium text-slate-600">
-                        {Number(year)}年{Number(month)}月{index === 0 ? "（本月剩餘）" : ""}
-                        {isPeak ? <span className="ml-2 rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-700">高於月化平均</span> : null}
+                        {Number(year)}年{Number(month)}月{row.isCurrentMonth ? "（本月剩餘）" : ""}
+                        {row.isPeak ? <span className="ml-2 rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-700">高於月化平均</span> : null}
                       </span>
-                      <span className={`text-sm font-semibold ${isPeak ? "text-amber-700" : "text-slate-900"}`}>{formatMoney(entry.total)}</span>
+                      <span className={`text-sm font-semibold ${row.isPeak ? "text-amber-700" : "text-slate-900"}`}>{formatMoney(row.total)}</span>
                     </div>
                     {lumpItems.length > 0 ? (
                       <p className="mt-1 break-words text-xs text-slate-500">
@@ -966,6 +974,17 @@ export default function RecurringPage() {
                 );
               })}
             </ul>
+            {hiddenCashflowCount > 0 || showAllCashflowMonths ? (
+              <button
+                type="button"
+                aria-expanded={showAllCashflowMonths}
+                onClick={() => setShowAllCashflowMonths((current) => !current)}
+                className="mt-3 flex min-h-11 w-full items-center justify-center gap-1 rounded-full text-sm font-semibold text-slate-600 hover:bg-slate-50"
+              >
+                {showAllCashflowMonths ? "收合" : `展開全部 12 個月（另有 ${hiddenCashflowCount} 個月）`}
+                {showAllCashflowMonths ? <ChevronUp aria-hidden="true" className="h-4 w-4" /> : <ChevronDown aria-hidden="true" className="h-4 w-4" />}
+              </button>
+            ) : null}
           </section>
         ) : null}
 
