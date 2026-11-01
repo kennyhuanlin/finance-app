@@ -292,6 +292,11 @@ export async function PUT(request: NextRequest, context: Context) {
           Number(current?.amount) === 26.25 &&
           current?.frequency === "monthly" &&
           current?.startDate === "2026-11-25" &&
+          (body.name === undefined || body.name === "Supabase") &&
+          (body.category === undefined || body.category === "AI工具訂閱") &&
+          (body.amount === undefined || Number(body.amount) === 26.25) &&
+          (body.frequency === undefined || body.frequency === "monthly") &&
+          (body.startDate === undefined || body.startDate === "2026-11-25") &&
           due.endsWith("-25") &&
           due === String(current?.nextRunDate ?? "") &&
           nextRunDateForActivation({ currency, nextRunDate: due,
