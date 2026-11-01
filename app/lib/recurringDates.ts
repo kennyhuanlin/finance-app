@@ -41,3 +41,32 @@ export function validateRecurringRule(rule: Record<string, unknown>, partial = f
   if (rule.nextRunDate && rule.startDate && String(rule.nextRunDate) < String(rule.startDate)) return "下次執行日不可早於開始日期";
   return "";
 }
+
+
+/**
+ * Keep an existing USD rule's scheduled date when it is enabled.
+ * USD dates in the past require a separate date edit, never automatic backfill.
+ * Legacy TWD resumption retains the existing next-month behavior.
+ */
+export function nextRunDateForActivation(
+  rule: {
+    currency?: unknown;
+    nextRunDate?: unknown;
+    frequency?: unknown;
+    startDate?: unknown;
+  },
+  today: string,
+): string | null {
+  if (!isDateOnly(today)) return null;
+  if (String(rule.currency ?? "TWD").toUpperCase() === "USD") {
+    const next = String(rule.nextRunDate ?? "").trim();
+    const start = String(rule.startDate ?? "").trim();
+    return isDateOnly(next) && next >= today &&
+      (!isDateOnly(start) || next >= start) ? next : null;
+  }
+  return addPeriod(
+    today,
+    String(rule.frequency ?? "monthly"),
+    String(rule.startDate || today),
+  );
+}

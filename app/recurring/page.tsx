@@ -6,7 +6,7 @@ import { ChevronDown, ChevronUp, Pencil, Trash2 } from "lucide-react";
 import { useCategories } from "../categories-context";
 import { formatCategoryLabel } from "../lib/categories";
 import { formatFinanceMoney, normalizeFinanceCurrency, type FinanceCurrency } from "../lib/transactions";
-import { addPeriod, validateRecurringRule } from "../lib/recurringDates";
+import { addPeriod, nextRunDateForActivation, validateRecurringRule } from "../lib/recurringDates";
 import { normalizeBoolean } from "../lib/boolean";
 import {
   createRecurringRule,
@@ -490,18 +490,30 @@ export default function RecurringPage() {
   async function toggleRule(rule: RecurringRule) {
     if (updatingRuleId) return;
     if (rule.currency === "USD" && !rule.enabled) {
-      setStatusMessage("美元規則已建立，但現有每日排程尚未支援美元，暫不可啟用自動記帳。");
-      return;
+      if (rule.id !== "recurring-supabase-usd-20261030") {
+        setStatusMessage("目前只開放已驗收的 Supabase 美元規則，其他美元規則仍須暫停。");
+        return;
+      }
+      if (!nextRunDateForActivation(rule, todayDateOnly())) {
+        setStatusMessage("下次執行日已過期或無效；請先保持暫停並確認日期，不回溯補記。");
+        return;
+      }
     }
 
     const enabled = !rule.enabled;
+    const safeUsdDate = enabled && rule.currency === "USD"
+      ? nextRunDateForActivation(rule, todayDateOnly())
+      : null;
     setUpdatingRuleId(rule.id);
     setStatusMessage("");
     try {
       await updateRecurringRule(rule.id, {
         id: rule.id,
         enabled,
-        ...(enabled ? { nextRunDate: addPeriod(todayDateOnly(), rule.frequency, rule.startDate || todayDateOnly()) } : {}),
+        ...(rule.currency === "USD" ? { isActive: enabled } : {}),
+        ...(enabled ? { nextRunDate: rule.currency === "USD"
+          ? safeUsdDate
+          : addPeriod(todayDateOnly(), rule.frequency, rule.startDate || todayDateOnly()) } : {}),
       });
       await loadRules();
     } catch (error) {
@@ -653,23 +665,31 @@ export default function RecurringPage() {
   }
 
   function toggleEditingEnabled() {
+    if (!editingRule) return;
+    if (!editingRule.enabled && editingRule.currency === "USD") {
+      if (editingRule.id !== "recurring-supabase-usd-20261030") {
+        setFormMessage("其他美元規則目前只能保持暫停。");
+        return;
+      }
+      if (!nextRunDateForActivation(editingRule, todayDateOnly())) {
+        setFormMessage("美元規則的下次執行日已過期或無效，請先保持暫停並修正日期。");
+        return;
+      }
+    }
+    setFormMessage("");
     setEditingRule((current) => {
-      if (!current) {
-        return current;
-      }
-
-      if (current.enabled) {
-        return { ...current, enabled: false, status: "paused" };
-      }
-      if (current.currency === "USD") return current;
+      if (!current) return current;
+      if (current.enabled) return { ...current, enabled: false, status: "paused" };
 
       return {
         ...current,
         enabled: true,
         status: "active",
-        nextRunDate: current.manualNextRunDate
+        nextRunDate: current.currency === "USD"
           ? current.nextRunDate
-          : addPeriod(todayDateOnly(), current.frequency, current.startDate || todayDateOnly()),
+          : current.manualNextRunDate
+            ? current.nextRunDate
+            : addPeriod(todayDateOnly(), current.frequency, current.startDate || todayDateOnly()),
       };
     });
   }
@@ -678,8 +698,10 @@ export default function RecurringPage() {
     event.preventDefault();
 
     if (!editingRule || saveInFlight.current) return;
-    if (editingRule.currency === "USD" && editingRule.enabled) {
-      setFormMessage("USD 規則需先升級每日自動排程才能啟用，目前僅可暫停儲存。");
+    if (editingRule.currency === "USD" && editingRule.enabled &&
+      (editingRule.id !== "recurring-supabase-usd-20261030" ||
+        !nextRunDateForActivation(editingRule, todayDateOnly()))) {
+      setFormMessage("僅允許未來日期的既有 Supabase 美元規則啟用；其他美元規則請先保持暫停。");
       return;
     }
     const previousRule = rules.find((rule) => rule.id === editingRule.id);
@@ -1350,7 +1372,7 @@ export default function RecurringPage() {
               </div>
 
               <p className="rounded-[18px] bg-blue-50 px-4 py-3 text-xs font-medium leading-5 text-blue-700">
-                下次執行日會依開始日期與週期自動建議；手動修改後，系統會保留你的設定。重新啟用後，將從新的下次執行日開始計算，不會補記停用期間。
+                下次執行日依開始日期與週期建議。美元規則重新啟用會保留未來的原定日期；日期已過期時須先修正，不會補記停用期間。
               </p>
 
               <label className="grid gap-2">
@@ -1372,7 +1394,7 @@ export default function RecurringPage() {
                   </p>
                   <p className="mt-1 text-xs font-medium text-slate-400">
                     {editingRule.currency === "USD"
-                      ? "美元規則暫不自動記帳，需待每日排程支援 USD 後才能啟用"
+                      ? "其他美元規則暫不自動記帳；目前僅可啟用已驗收的 Supabase US$26.25 規則，並保留未到期的每月25日"
                       : "停用只會暫停規則，不會產生交易或回溯補記"}
                   </p>
                 </div>
