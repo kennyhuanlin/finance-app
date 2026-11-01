@@ -8,6 +8,7 @@ import { formatCategoryLabel } from "../lib/categories";
 import { formatFinanceMoney, normalizeFinanceCurrency, type FinanceCurrency } from "../lib/transactions";
 import { addPeriod, nextRunDateForActivation, validateRecurringRule } from "../lib/recurringDates";
 import { normalizeBoolean } from "../lib/boolean";
+import { monthlyEquivalent, projectRecurringCashflow, splitMonthlyBudget } from "../lib/recurringCashflow";
 import {
   createRecurringRule,
   deleteRecurringRule,
@@ -197,26 +198,6 @@ function isActiveRule(rule: RecurringRule) {
     !hasExpiredEndDate(rule) &&
     !hasNoRemainingCount(rule)
   );
-}
-
-function getMonthlyAmount(rule: RecurringRule) {
-  if (rule.frequency === "daily") {
-    return (rule.amount * 365) / 12;
-  }
-
-  if (rule.frequency === "weekly") {
-    return (rule.amount * 52) / 12;
-  }
-
-  if (rule.frequency === "quarterly") {
-    return rule.amount / 3;
-  }
-
-  if (rule.frequency === "yearly") {
-    return rule.amount / 12;
-  }
-
-  return rule.amount;
 }
 
 function formatDate(date: string) {
@@ -464,25 +445,34 @@ export default function RecurringPage() {
     () =>
       rules
         .filter((rule) => isExpenseRule(rule) && isActiveRule(rule) && rule.currency === "TWD")
-        .reduce((sum, rule) => sum + getMonthlyAmount(rule), 0),
+        .reduce((sum, rule) => sum + monthlyEquivalent(rule), 0),
     [rules],
   );
   const monthlyIncomeTotal = useMemo(
     () =>
       rules
         .filter((rule) => isIncomeRule(rule) && isActiveRule(rule) && rule.currency === "TWD")
-        .reduce((sum, rule) => sum + getMonthlyAmount(rule), 0),
+        .reduce((sum, rule) => sum + monthlyEquivalent(rule), 0),
     [rules],
   );
   const monthlyExpenseUsd = useMemo(
     () => rules.filter((rule) => isExpenseRule(rule) && isActiveRule(rule) && rule.currency === "USD")
-      .reduce((sum, rule) => sum + getMonthlyAmount(rule), 0),
+      .reduce((sum, rule) => sum + monthlyEquivalent(rule), 0),
     [rules],
   );
   const monthlyIncomeUsd = useMemo(
     () => rules.filter((rule) => isIncomeRule(rule) && isActiveRule(rule) && rule.currency === "USD")
-      .reduce((sum, rule) => sum + getMonthlyAmount(rule), 0),
+      .reduce((sum, rule) => sum + monthlyEquivalent(rule), 0),
     [rules],
+  );
+  const twdExpenseRules = useMemo(
+    () => rules.filter((rule) => isExpenseRule(rule) && isActiveRule(rule) && rule.currency === "TWD"),
+    [rules],
+  );
+  const expenseBudget = useMemo(() => splitMonthlyBudget(twdExpenseRules), [twdExpenseRules]);
+  const cashflowMonths = useMemo(
+    () => projectRecurringCashflow(twdExpenseRules, todayDateOnly(), 12),
+    [twdExpenseRules],
   );
   const monthlyNetFlow = monthlyIncomeTotal - monthlyExpenseTotal;
   const monthlyNetFlowUsd = monthlyIncomeUsd - monthlyExpenseUsd;
@@ -923,6 +913,62 @@ export default function RecurringPage() {
           </article>
         </section>
 
+        {activeTab === "expense" && twdExpenseRules.length > 0 ? (
+          <section
+            aria-label="現金流規劃"
+            className="rounded-[32px] border border-white/75 bg-white/80 p-5 shadow-sm shadow-slate-200/80 backdrop-blur-xl"
+          >
+            <p className="text-sm font-medium text-slate-500">現金流規劃（台幣）</p>
+            <div className="mt-3 grid gap-3 sm:grid-cols-3">
+              <div className="rounded-2xl bg-white/75 p-4">
+                <p className="text-sm font-medium text-slate-500">每月實際扣款</p>
+                <p className="mt-1 text-lg font-semibold text-slate-950">{formatMoney(expenseBudget.everyMonth)}</p>
+                <p className="mt-1 text-xs text-slate-400">每日、每週、每月規則</p>
+              </div>
+              <div className="rounded-2xl bg-white/75 p-4">
+                <p className="text-sm font-medium text-slate-500">年付／季付分攤</p>
+                <p className="mt-1 text-lg font-semibold text-amber-600">{formatMoney(expenseBudget.reserve)}</p>
+                <p className="mt-1 text-xs text-slate-400">建議每月預留</p>
+              </div>
+              <div className="rounded-2xl bg-white/75 p-4">
+                <p className="text-sm font-medium text-slate-500">月化合計</p>
+                <p className="mt-1 text-lg font-semibold text-rose-600">{formatMoney(expenseBudget.total)}</p>
+                <p className="mt-1 text-xs text-slate-400">每月應準備的平均金額</p>
+              </div>
+            </div>
+
+            <h3 className="mt-5 text-base font-semibold">未來 12 個月扣款預估</h3>
+            <p className="mt-1 text-xs text-slate-400">依目前啟用規則的下次執行日推算，含結束日期與剩餘期數；不含美元規則與一般記帳。</p>
+            <ul className="mt-3 grid gap-2">
+              {cashflowMonths.map((entry, index) => {
+                const [year, month] = entry.month.split("-");
+                const isPeak = entry.total > expenseBudget.total + 0.5;
+                const lumpItems = entry.items.filter((item) => item.frequency === "quarterly" || item.frequency === "yearly");
+                return (
+                  <li
+                    key={entry.month}
+                    data-month={entry.month}
+                    className={`rounded-2xl px-4 py-3 ${isPeak ? "bg-amber-50" : "bg-white/75"}`}
+                  >
+                    <div className="flex items-center justify-between gap-3">
+                      <span className="text-sm font-medium text-slate-600">
+                        {Number(year)}年{Number(month)}月{index === 0 ? "（本月剩餘）" : ""}
+                        {isPeak ? <span className="ml-2 rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-700">高於月化平均</span> : null}
+                      </span>
+                      <span className={`text-sm font-semibold ${isPeak ? "text-amber-700" : "text-slate-900"}`}>{formatMoney(entry.total)}</span>
+                    </div>
+                    {lumpItems.length > 0 ? (
+                      <p className="mt-1 break-words text-xs text-slate-500">
+                        含{lumpItems.map((item) => `${item.name} ${formatMoney(item.amount)}`).join("、")}
+                      </p>
+                    ) : null}
+                  </li>
+                );
+              })}
+            </ul>
+          </section>
+        ) : null}
+
         <section className="rounded-[32px] border border-white/75 bg-white/80 p-5 shadow-sm shadow-slate-200/80 backdrop-blur-xl">
           <div className="flex items-center justify-between gap-4">
             <div>
@@ -999,7 +1045,7 @@ export default function RecurringPage() {
                           ruleIsIncome ? "text-emerald-600" : "text-slate-950"
                         }`}
                       >
-                        {formatMoney(getMonthlyAmount(rule), rule.currency)}
+                        {formatMoney(monthlyEquivalent(rule), rule.currency)}
                       </p>
                     </div>
                     <div className="min-w-0 text-right">

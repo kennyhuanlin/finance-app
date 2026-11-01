@@ -7,7 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "test": "node --test tests/repair.test.cjs tests/supabase-usd-recurring.test.cjs"
+    "test": "node --test tests/repair.test.cjs tests/supabase-usd-recurring.test.cjs tests/recurring-cashflow.test.cjs"
   },
   "dependencies": {
     "lucide-react": "^1.23.0",
