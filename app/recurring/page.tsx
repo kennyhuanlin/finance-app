@@ -6,7 +6,7 @@ import { ChevronDown, ChevronUp, Pencil, Trash2 } from "lucide-react";
 import { useCategories } from "../categories-context";
 import { formatCategoryLabel } from "../lib/categories";
 import { formatFinanceMoney, normalizeFinanceCurrency, type FinanceCurrency } from "../lib/transactions";
-import { addPeriod, validateRecurringRule } from "../lib/recurringDates";
+import { addPeriod, nextRunDateForActivation, validateRecurringRule } from "../lib/recurringDates";
 import { normalizeBoolean } from "../lib/boolean";
 import {
   createRecurringRule,
@@ -490,18 +490,30 @@ export default function RecurringPage() {
   async function toggleRule(rule: RecurringRule) {
     if (updatingRuleId) return;
     if (rule.currency === "USD" && !rule.enabled) {
-      setStatusMessage("美元規則已建立，但現有每日排程尚未支援美元，暫不可啟用自動記帳。");
-      return;
+      if (rule.id !== "recurring-supabase-usd-20261030") {
+        setStatusMessage("目前只開放已驗收的 Supabase 美元規則，其他美元規則仍須暫停。");
+        return;
+      }
+      if (!nextRunDateForActivation(rule, todayDateOnly())) {
+        setStatusMessage("下次執行日已過期或無效；請先保持暫停並確認日期，不回溯補記。");
+        return;
+      }
     }
 
     const enabled = !rule.enabled;
+    const safeUsdDate = enabled && rule.currency === "USD"
+      ? nextRunDateForActivation(rule, todayDateOnly())
+      : null;
     setUpdatingRuleId(rule.id);
     setStatusMessage("");
     try {
       await updateRecurringRule(rule.id, {
         id: rule.id,
         enabled,
-        ...(enabled ? { nextRunDate: addPeriod(todayDateOnly(), rule.frequency, rule.startDate || todayDateOnly()) } : {}),
+        ...(rule.currency === "USD" ? { isActive: enabled } : {}),
+        ...(enabled ? { nextRunDate: rule.currency === "USD"
+          ? safeUsdDate
+          : addPeriod(todayDateOnly(), rule.frequency, rule.startDate || todayDateOnly()) } : {}),
       });
       await loadRules();
     } catch (error) {
