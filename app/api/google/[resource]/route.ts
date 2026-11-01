@@ -10,7 +10,7 @@ import {
   type SupportedSheet,
   updateWorksheetRow,
 } from "../../../lib/googleSheetsServer";
-import { validateRecurringRule } from "../../../lib/recurringDates";
+import { nextRunDateForActivation, validateRecurringRule } from "../../../lib/recurringDates";
 import { normalizeBoolean } from "../../../lib/boolean";
 import {
   refreshCashAccounts,
@@ -283,7 +283,25 @@ export async function PUT(request: NextRequest, context: Context) {
       const currency = String(body.currency ?? current?.currency ?? "TWD");
       const enabled = normalizeBoolean(body.enabled ?? current?.enabled, true);
       if (currency === "USD" && enabled) {
-        throw new ApiError("美元固定收支尚不能啟用：正式每日排程未完成 USD 驗收", 409);
+        const today = new Date(Date.now() + 8 * 3600000).toISOString().slice(0, 10);
+        const due = String(body.nextRunDate ?? current?.nextRunDate ?? "");
+        const eligible = id === "recurring-supabase-usd-20261030" &&
+          current?.name === "Supabase" &&
+          current?.currency === "USD" &&
+          current?.category === "AI工具訂閱" &&
+          Number(current?.amount) === 26.25 &&
+          current?.frequency === "monthly" &&
+          current?.startDate === "2026-11-25" &&
+          due.endsWith("-25") &&
+          due === String(current?.nextRunDate ?? "") &&
+          nextRunDateForActivation({ currency, nextRunDate: due,
+            startDate: current.startDate, frequency: current.frequency }, today) === due;
+        if (!eligible) {
+          throw new ApiError("只允許日期正確且尚未到期的 Supabase USD 26.25 規則啟用", 409);
+        }
+      }
+      if (currency === "USD" && Object.prototype.hasOwnProperty.call(body, "enabled")) {
+        body.isActive = enabled;
       }
     }
     if (shouldUseAppsScriptFallback()) {
